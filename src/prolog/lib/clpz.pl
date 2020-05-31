@@ -3191,6 +3191,14 @@ integer_log_b(N, B, Log0, Log) :-
             integer_log_b(N, B, Log1, Log)
         ).
 
+ceil_integer_log_b(N, B, Log0, Log) :-
+        T is B^Log0,
+        (   T >= N -> Log is Log0
+        ;   T < N,
+            Log1 is Log0 + 1,
+            ceil_integer_log_b(N, B, Log1, Log)
+        ).
+
 floor_integer_log_b(N, B, Log0, Log) :-
         T is B^Log0,
         (   T > N -> Log is Log0 - 1
@@ -5189,6 +5197,8 @@ run_propagator(pexp(X,Y,Z), MState) -->
         ;   X == 0 -> kill(MState), queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
         ;   Y == 0 -> kill(MState), Z = 1
         ;   Y == 1 -> kill(MState), Z = X
+        ;   Z == 0 -> kill(MState), X = 0, queue_goal(Y #> 0)
+        ;   Z == -1 -> kill(MState), X = -1
         ;   nonvar(X) ->
             (   nonvar(Y) ->
                 (   Y >= 0 -> true ; X =:= -1 ),
@@ -5211,10 +5221,16 @@ run_propagator(pexp(X,Y,Z), MState) -->
                 ;   true
                 ),
                 (   { X > 0,
-                      fd_get(Z, _, _, n(ZMax), _),
+                      fd_get(Z, _, ZInf, n(ZMax), _),
                       ZMax > 0 } ->
-                    { floor_integer_log_b(ZMax, X, 1, YCeil) },
-                    queue_goal(Y in inf..YCeil)
+                    { floor_integer_log_b(ZMax, X, 1, YCeil),
+                      ( ZInf == inf -> YFloor = 0
+                      ; ZInf = n(ZMin) ->
+                        (   ZMin < 0 -> YFloor = 0
+                            ;   ceil_integer_log_b(ZMin, X, 0, YFloor)
+                        )
+                      ) },
+                    queue_goal(Y in YFloor..YCeil)
                 ;   true
                 )
             )
