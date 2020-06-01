@@ -5198,7 +5198,6 @@ run_propagator(pexp(X,Y,Z), MState) -->
         ;   Y == 0 -> kill(MState), Z = 1
         ;   Y == 1 -> kill(MState), Z = X
         ;   Z == 0 -> kill(MState), X = 0, queue_goal(Y #> 0)
-        ;   Z == -1 -> kill(MState), X = -1
         ;   nonvar(X) ->
             (   nonvar(Y) ->
                 (   Y >= 0 -> true ; X =:= -1 ),
@@ -5319,13 +5318,50 @@ run_propagator(pexp(X,Y,Z), MState) -->
                 )
             ;   true
             )
-        ;   { fd_get(X, _, XL, _, _),
+        ;   { fd_get(X, XD, XL, _, XPs),
+              XL cis_gt n(1),
+              fd_get(Z, _, ZL, ZU, _),
+              ZL cis_gt n(0),
+              ZU = n(ZMax),
+              fd_get(Y, YD, YPs) } ->
+            { domain_remove_greater_than(XD, ZMax, XD1),
+              XD1 = from_to(_, n(XMax)),
+              ZL = n(ZMin),
+              ceil_integer_log_b(ZMin, XMax, 0, YFloor),
+              domain_remove_smaller_than(YD, YFloor, YD1),
+              XL = n(XMin),
+              floor_integer_log_b(ZMax, XMin, 1, YCeil),
+              domain_remove_greater_than(YD1, YCeil, YD2) },
+            fd_put(X, XD1, XPs),
+            fd_put(Y, YD2, YPs)
+        ;   { fd_get(X, _, XL, XU, _),
               XL cis_gt n(0),
-              fd_get(Y, _, YL, _, _),
-              YL cis_gt n(0),
+              fd_get(Y, _, YL, YU, _),
+              YL cis_geq n(0),
+              ( XU = sup ; YU = sup ),
               fd_get(Z, ZD, ZPs) } ->
             { n(NZL) cis XL^YL,
               domain_remove_smaller_than(ZD, NZL, ZD1) },
+            fd_put(Z, ZD1, ZPs)
+        ;   { fd_get(X, _, XL, XU, _),
+              XL cis_gt n(0),
+              XU = n(_),
+              fd_get(Y, _, YL, YU, _),
+              YL cis_geq n(0),
+              YU = n(_),
+              fd_get(Z, ZD, ZPs) } ->
+            { n(NZL) cis XL^YL,
+              domain_remove_smaller_than(ZD, NZL, ZD1),
+              n(NZU) cis XU^YU,
+              domain_remove_greater_than(ZD1, NZU, ZD2) },
+            fd_put(Z, ZD2, ZPs)
+        ;   { fd_get(X, _, XL, _, _),
+              XL cis_gt n(1),
+              fd_get(Y, YD, YPs),
+              fd_get(Z, ZD, ZPs) } ->
+            { domain_remove_smaller_than(YD, 0, YD1),
+              domain_remove_smaller_than(ZD, 1, ZD1) },
+            fd_put(Y, YD1, YPs),
             fd_put(Z, ZD1, ZPs)
         ;   true
         ).
