@@ -5210,28 +5210,40 @@ run_propagator(pexp(X,Y,Z), MState) -->
                     { integer_log_b(Z, X, 1, Y) }
                 ;   true
                 )
-            ;   { fd_get(Y, _, YL, YU, _),
-                  fd_get(Z, ZD, ZPs) },
-                (   { X > 0, YL cis_geq n(0) } ->
-                    { NZL cis n(X)^YL,
-                      NZU cis n(X)^YU,
-                      domains_intersection(ZD, from_to(NZL,NZU), NZD) },
-                    fd_put(Z, NZD, ZPs)
-                ;   true
-                ),
-                (   { X > 0,
-                      fd_get(Z, _, ZInf, n(ZMax), _),
-                      ZMax > 0 } ->
-                    { floor_integer_log_b(ZMax, X, 1, YCeil),
-                      ( ZInf == inf -> YFloor = 0
-                      ; ZInf = n(ZMin) ->
-                        (   ZMin < 0 -> YFloor = 0
-                            ;   ceil_integer_log_b(ZMin, X, 0, YFloor)
-                        )
-                      ) },
-                    queue_goal(Y in YFloor..YCeil)
-                ;   true
-                )
+            ;   { X > 1, fd_get(Y, YD, YPs),
+                  fd_get(Z, _, ZL, ZU, _),
+                  ZL cis_gt n(0),
+                  ZU = n(ZMax),
+                  fd_get(Y, YD, YPs) } ->
+                { ZL = n(ZMin),
+                  ceil_integer_log_b(ZMin, X, 0, YFloor),
+                  domain_remove_smaller_than(YD, YFloor, YD1),
+                  floor_integer_log_b(ZMax, X, 1, YCeil),
+                  domain_remove_greater_than(YD1, YCeil, YD2) },
+                fd_put(Y, YD2, YPs)
+            ;   { X > 0,
+                  fd_get(Y, _, YL, YU, _),
+                  YL cis_geq n(0),
+                  YU = sup,
+                  fd_get(Z, ZD, ZPs) } ->
+                { n(NZL) cis n(X)^YL,
+                  domain_remove_smaller_than(ZD, NZL, ZD1) },
+                fd_put(Z, ZD1, ZPs)
+            ;   { X > 0,
+                  fd_get(Y, _, YL, YU, _),
+                  YL cis_geq n(0),
+                  YU = n(_),
+                  fd_get(Z, ZD, ZPs) } ->
+                { n(NZL) cis n(X)^YL,
+                  domain_remove_smaller_than(ZD, NZL, ZD1),
+                  n(NZU) cis n(X)^YU,
+                  domain_remove_greater_than(ZD1, NZU, ZD2) },
+                fd_put(Z, ZD2, ZPs)
+            ;   { X > 1, fd_get(Y, YD, YPs), fd_get(Z, ZD, ZPs) } ->
+                { domain_remove_smaller_than(YD, 0, YD1),
+                  domain_remove_smaller_than(ZD, 1, ZD1) },
+                fd_put(Y, YD1, YPs),
+                fd_put(Z, ZD1, ZPs)
             )
         ;   nonvar(Z) ->
             (   nonvar(Y) ->
@@ -5363,6 +5375,7 @@ run_propagator(pexp(X,Y,Z), MState) -->
               domain_remove_smaller_than(ZD, 1, ZD1) },
             fd_put(Y, YD1, YPs),
             fd_put(Z, ZD1, ZPs)
+            % queue_goal((Y #>= 0, Z #>= 1))
         ;   true
         ).
 
