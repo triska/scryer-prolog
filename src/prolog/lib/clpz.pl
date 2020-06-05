@@ -5379,10 +5379,54 @@ run_propagator(pexp_(X,Y,Z), MState) -->
         ;   true
         ).
 
-run_propagator(pexpx(X, Y, Z), MState) -->
-        (   X == -1 -> queue_goal(Z in -1\/1)
+run_propagator(pexp(X,Y,Z), MState) -->
+        (   nonvar(X), nonvar(Y) ->
+            (   Y >= 0 -> true ; X =:= -1 ),
+            kill(MState),
+            Z is X^Y
+        ;   nonvar(Y), nonvar(Z) ->
+            { integer_kth_root(Z, Y, R) },
+            kill(MState),
+            (   { even(Y) } ->
+                N is -R,
+                { X in N \/ R }
+            ;   X = R
+            )
+        ;   nonvar(Z), nonvar(X) ->
+            (   Z > 1 ->
+                abs(X) > 1,
+                kill(MState),
+                { integer_log_b(Z, X, 1, Y) }
+            ;   { Z < -1 } ->
+                abs(X) > 1,
+                kill(MState),
+                { integer_log_b(abs(Z), abs(X), 1, Y), odd(Y) }
+            ;   X == 0 ->
+                kill(MState),
+                queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
+            ;   true % Infinite solution for Y when abs(Z) = 1.
+            )
+        % ;   var(Z), \+ (nonvar(X), nonvar(Y)) -> run_propagator(pexpz(X, Y, Z), MState)
+        % ;   var(Y), \+ (nonvar(Z), nonvar(X)) -> run_propagator(pexpy(X, Y, Z), MState)
+        % ;   var(X), \+ (nonvar(Y), nonvar(Z)) -> run_propagator(pexpx(X, Y, Z), MState)
+        % ;   var(Z), (var(X), ! ; var(Y)) -> run_propagator(pexpz(X, Y, Z), MState)
+        % ;   var(Y), (var(Z), ! ; var(X)) -> run_propagator(pexpy(X, Y, Z), MState)
+        % ;   var(X), (var(Y), ! ; var(Z)) -> run_propagator(pexpx(X, Y, Z), MState)
+        ;   run_propagator(pexpz(X, Y, Z), MState),
+            run_propagator(pexpy(X, Y, Z), MState),
+            run_propagator(pexpx(X, Y, Z), MState),
+            true
+        ).
+
+% /*
+run_propagator(pexpz(X, Y, Z), MState) -->
+        % { write(z), nl },
+        (   nonvar(Z) -> true % Nothing to do.
         ;   X == 0 -> kill(MState), queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
+        % ;   X == -1 -> queue_goal(Z in -1\/1) % This doesn't work.
         ;   X == 1 -> kill(MState), Z = 1
+        ;   Y == 0 -> kill(MState), Z = 1
+        ;   Y == 1 -> kill(MState), X = Z
         ;   nonvar(X) ->
             (   { X > 1, fd_get(Y, _, YL, YU, _), YU = n(_),
                   YL cis_geq n(0),
@@ -5392,31 +5436,37 @@ run_propagator(pexpx(X, Y, Z), MState) -->
                   n(NZMax) cis n(X)^YU,
                   domain_remove_greater_than(ZD1, NZMax, ZD2) },
                 fd_put(Z, ZD2, ZPs)
-            ;   { X > 1, fd_get(Y, _, YL, sup, _),
+            ;   { X > 1, fd_get(Y, _, YL, _, _),
                   YL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZMin) cis n(X)^YL,
                   domain_remove_smaller_than(ZD, NZMin, ZD1) },
                 fd_put(Z, ZD1, ZPs)
-            ;   { X > 1,
-                  fd_get(Y, YD, YPs),
+            ;   { X > 1 } ->
+                queue_goal(Z #> 0)
+            ;   { X == -1 } -> queue_goal(Z in -1\/1) % Infinite solution for Y.
+            ;   { X < -1 } -> true % Chaos.
+            )
+        ;   nonvar(Y) ->
+            (   { Y > 0, fd_get(X, _, XL, XU, _), XU = n(_),
+                  XL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
-                { domain_remove_smaller_than(YD, 0, YD1),
-                  domain_remove_smaller_than(ZD, 1, ZD1) },
-                fd_put(Y, YD1, YPs),
+                { n(ZMin) cis XL^n(Y),
+                  domain_remove_smaller_than(ZD, ZMin, ZD1),
+                  n(ZMax) cis XU^n(Y),
+                  domain_remove_greater_than(ZD1, ZMax, ZD2) },
+                fd_put(Z, ZD2, ZPs)
+            ;   { Y > 0, fd_get(X, _, XL, _, _),
+                  XL cis_geq n(0),
+                  fd_get(Z, ZD, ZPs) } ->
+                { n(ZMin) cis XL^n(Y),
+                  domain_remove_smaller_than(ZD, ZMin, ZD1) },
                 fd_put(Z, ZD1, ZPs)
+            ;   { even(Y) } ->
+                queue_goal(Z #>= 0)
             ;   true
             )
         ;   (   { fd_get(X, _, XL, XU, _),
-                  XL cis_gt n(0),
-                  fd_get(Y, _, YL, YU, _),
-                  YL cis_geq n(0),
-                  ( XU = sup, ! ; YU = sup ),
-                  fd_get(Z, ZD, ZPs) } ->
-                { n(NZL) cis XL^YL,
-                  domain_remove_smaller_than(ZD, NZL, ZD1) },
-                fd_put(Z, ZD1, ZPs)
-            ;   { fd_get(X, _, XL, XU, _),
                   XL cis_gt n(0),
                   XU = n(_),
                   fd_get(Y, _, YL, YU, _),
@@ -5428,34 +5478,53 @@ run_propagator(pexpx(X, Y, Z), MState) -->
                   n(NZU) cis XU^YU,
                   domain_remove_greater_than(ZD1, NZU, ZD2) },
                 fd_put(Z, ZD2, ZPs)
-            ;   { fd_get(X, _, XL, _, _),
-                  XL cis_gt n(1),
-                  fd_get(Y, YD, YPs),
+            ;   { fd_get(X, _, XL, XU, _),
+                  XL cis_gt n(0),
+                  fd_get(Y, _, YL, YU, _),
+                  YL cis_geq n(0),
+                  ( XU = sup, ! ; YU = sup ),
                   fd_get(Z, ZD, ZPs) } ->
-                { domain_remove_smaller_than(YD, 0, YD1),
-                  domain_remove_smaller_than(ZD, 1, ZD1) },
-                fd_put(Y, YD1, YPs),
+                { n(NZL) cis XL^YL,
+                  domain_remove_smaller_than(ZD, NZL, ZD1) },
                 fd_put(Z, ZD1, ZPs)
+            % ;   { fd_get(X, _, XL, _, _), % Not unique.
+            %       XL cis_gt n(1) } ->
+            %     queue_goal(Z #> 0)
             )
-        ;   true
+        ;   true % Not enough information.
         ).
+% */
 
+% /*
 run_propagator(pexpy(X, Y, Z), MState) -->
-        (   Y == 0 -> kill(MState), Z = 1
-        ;   Y == 1 -> kill(MState), X = Z
-        ;   nonvar(Y) ->
-            (   (   Y < 0 -> queue_goal([X, Z] in -1\/1)
-                ;   true % TODO: Finish this.
-                )
+        % { write(y), nl },
+        (   nonvar(Y) -> true % Nothing to do.
+        ;   X == -1 -> true % Infinite solution for Y.
+        ;   X == 0 -> queue_goal(Y #>= 0)
+        ;   X == 1 -> true % Infinite solution for Y.
+        ;   Z == 0 -> queue_goal(Y #> 0)
+        ;   Z == -1 -> queue_goal(Y mod 2 #= 1)
+        ;   nonvar(X) ->
+            (   { X > 1, fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+                  ZL cis_gt n(1),
+                  fd_get(Y, YD, YPs) } ->
+                { ZL = n(ZMin),
+                  ceil_integer_log_b(ZMin, X, 0, YFloor),
+                  domain_remove_smaller_than(YD, YFloor, YD1),
+                  ZU = n(ZMax),
+                  floor_integer_log_b(ZMax, X, 1, YCeil),
+                  domain_remove_greater_than(YD1, YCeil, YD2) },
+                fd_put(Y, YD2, YPs)
+            ;   { X > 1, fd_get(Z, _, ZL, _, _),
+                  ZL cis_gt n(1),
+                  fd_get(Y, YD, YPs) } ->
+                { ZL = n(ZMin),
+                  ceil_integer_log_b(ZMin, X, 0, YFloor),
+                  domain_remove_smaller_than(YD, YFloor, YD1) },
+                fd_put(Y, YD1, YPs)
+            ;   { abs(X) > 1 } ->
+                queue_goal(Y #>= 0)
             )
-        % TODO: Here too.
-        ;   true
-        ).
-
-run_propagator(pexpz(X, Y, Z), MState) -->
-        (   Z == -1 -> kill(MState), queue_goal(Y mod 2 #= 1)
-        ;   Z == 0 -> kill(MState), X = 0, queue_goal(Y #> 0)
-        % ;   Z == 1 -> kill(MState), queue_goal((X #= 1 ; Y #= 0)) % Not good?
         ;   nonvar(Z) ->
             (   { Z > 1, fd_get(X, _, XL, n(XMax), _),
                   XL cis_gt n(1),
@@ -5466,7 +5535,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                   floor_integer_log_b(Z, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
                 fd_put(Y, YD2, YPs)
-            ;   { Z > 1, fd_get(X, _, XL, sup, _),
+            ;   { Z > 1, fd_get(X, _, XL, _, _),
                   XL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { domain_remove_smaller_than(YD, 1, YD1),
@@ -5474,37 +5543,70 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                   ceil_integer_log_b(Z, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
                 fd_put(Y, YD2, YPs)
-            ;   { Z > 1 } ->
-                queue_goal((abs(X) #> 1, Y #> 0))
+            ;   { abs(Z) > 1 } ->
+                queue_goal(Y #> 0)
             ;   true
             )
-        ;   (   { fd_get(Z, _, ZL, n(ZMax), _),
-                  ZL cis_gt n(1),
-                  fd_get(X, _, XL, n(XMax), _),
+        ;   % ()   { fd_get(X, _, XL, XU, _), XU = n(_),
+            %       XL cis_gt n(1),
+            %       fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+            %       ZL cis_gt n(1),
+            %       fd_get(Y, YD, YPs) } ->
+            %     { ZL = n(ZMin),
+            %       XU = n(XMax),
+            %       ceil_integer_log_b(ZMin, XMax, 0, YFloor),
+            %       domain_remove_smaller_than(YD, YFloor, YD1),
+            %       XL = n(XMin),
+            %       ZU = n(ZMax),
+            %       floor_integer_log_b(ZMax, XMin, 1, YCeil),
+            %       domain_remove_greater_than(YD1, YCeil, YD2) },
+            %     fd_put(Y, YD2, YPs)
+            (   { fd_get(X, _, XL, _, _),
                   XL cis_gt n(1),
+                  fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+                  ZL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
-                { ceil_integer_log_b(ZMin, XMax, 0, YFloor),
-                  domain_remove_smaller_than(YD, YFloor, YD1),
+                { domain_remove_smaller_than(YD, 1, YD1),
                   XL = n(XMin),
+                  ZU = n(ZMax),
                   floor_integer_log_b(ZMax, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
                 fd_put(Y, YD2, YPs)
-            ;   { fd_get(Z, _, ZL, sup, _),
-                  ZL cis_gt n(1),
-                  fd_get(X, _, XL, sup, _),
-                  XL cis_gt n(1),
-                  fd_get(Y, YD, YPs) } ->
-                { domain_remove_smaller_than(YD, 1, YD1),
-                  XL = n(XMin),
-                  ceil_integer_log_b(Z, XMin, 1, YCeil),
-                  domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
-            ;   { fd_get(Z, _, ZL, _, _),
-                  ZL cis_gt n(1) } ->
-                queue_goal((abs(X) #> 1, Y #> 0))
+            % ;   { fd_get(X, _, XL, _, _), % Not unique.
+            %       XL cis_gt n(1) } ->
+            %     queue_goal(Y #>= 0)
+            % ;   { fd_get(Z, _, ZL, _, _), % Not unique.
+            %       ZL cis_gt n(1) } ->
+            %     queue_goal(Y #> 0)
             )
-        ;   true
+        ;   true % Not enough information.
         ).
+% */
+
+% /*
+run_propagator(pexpx(X, Y, Z), MState) -->
+        % { write(x), nl },
+        (   nonvar(X) -> true % Nothing to do.
+        ;   Z == 0 -> X = 0
+        ;   Z == -1 -> X = -1
+        ;   nonvar(Y) ->
+            (   { Y < 0, fd_get(X, XD, XPs) } ->
+                queue_goal(X in -1\/1)
+            ;   true % Y >= 0, infinite solution for X.
+            )
+        ;   nonvar(Z) ->
+            (   { A is abs(Z), A > 1, N is -A } ->
+                queue_goal(X in N.. -2\/2..A)
+            ;   true % abs(Z) = 1, infinite solution for X.
+            )
+        % ;   (   { fd_get(Z, _, ZL, _, _), % Not unique.
+        %           ZL cis_gt n(1) } ->
+        %         queue_goal(X in inf.. -2\/2..sup)
+        %     % TODO: Here too.
+        %     )
+        ;   true % Not enough information.
+        ).
+% */
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 run_propagator(pzcompare(Order, A, B), MState) -->
