@@ -5381,37 +5381,43 @@ run_propagator(pexp_(X,Y,Z), MState) -->
 
 run_propagator(pexp(X,Y,Z), MState) -->
         (   nonvar(X), nonvar(Y) ->
-            (   Y >= 0 -> true ; ( X =:= -1 ; X =:= 1) ),
             kill(MState),
+            (   Y >= 0 -> true
+            ;   X =:= -1 -> true
+            ;   X =:= 1
+            ),
             Z is X^Y
         ;   nonvar(Y), nonvar(Z) ->
-            { integer_kth_root(Z, Y, R) },
             kill(MState),
-            (   { even(Y) } ->
-                N is -R,
-                { X in N \/ R }
-            ;   X = R
+            (   Y =:= 0 -> Z =:= 1
+            ;   { integer_kth_root(Z, Y, R) },
+                (   { even(Y) } ->
+                    N is -R,
+                    { X in N \/ R }
+                ;   X = R
+                )
             )
         ;   nonvar(Z), nonvar(X) ->
             (   Z > 1 ->
-                abs(X) > 1,
                 kill(MState),
+                abs(X) > 1,
                 { integer_log_b(Z, X, 1, Y) }
             ;   { Z < -1 } ->
-                abs(X) > 1,
                 kill(MState),
+                X < -1,
                 { integer_log_b(abs(Z), abs(X), 1, Y), odd(Y) }
-            ;   X == 0 ->
+            ;   { Z =:= 1, ( X =:= 0 -> true ; X > 1 -> true ; X < -1 ) } ->
+                kill(MState),
+                Y = 0
+            ;   X =:= 0 ->
                 kill(MState),
                 queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
-            ;   true % Infinite solution for Y when abs(Z) = 1.
+            ;   { X =:= 1 } -> kill(MState), Z =:= 1
+            ;   { abs(Z) =:= 1 } -> X =:= -1
             )
         ;   run_propagator(pexpz(X, Y, Z), MState),
             run_propagator(pexpy(X, Y, Z), MState),
-            % run_propagator(pexpx(X, Y, Z), MState),
-            % run_propagator(pexpz(X, Y, Z), MState), % Not nice.
-            % run_propagator(pexpy(X, Y, Z), MState),
-            % run_propagator(pexpx(X, Y, Z), MState),
+            run_propagator(pexpx(X, Y, Z), MState),
             true
         ).
 
@@ -5421,83 +5427,87 @@ run_propagator(pexp(X,Y,Z), MState) -->
 run_propagator(pexpz(X, Y, Z), MState) -->
         % { write(z), nl },
         (   nonvar(Z) -> true % Nothing to do.
-        % TODO: remove this.
-        ;   X == 0 -> kill(MState), queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
-        % ;   X == -1 -> queue_goal(Z in -1\/1) % This doesn't work.
-        ;   X == 1 -> kill(MState), Z = 1
-        ;   Y == 0 -> kill(MState), Z = 1
-        ;   Y == 1 -> kill(MState), X = Z
         ;   nonvar(X) ->
-            (   { X > 1, fd_get(Y, _, YL, YU, _), YU = n(_),
+            (   X =:= 0 -> kill(MState), queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
+            ;   X =:= 1 -> kill(MState), Z = 1
+            ;   { X > 1, fd_get(Y, _, YL, YU, _), YU = n(_),
                   YL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZMin) cis n(X)^YL,
                   domain_remove_smaller_than(ZD, NZMin, ZD1),
                   n(NZMax) cis n(X)^YU,
                   domain_remove_greater_than(ZD1, NZMax, ZD2) },
-                fd_put(Z, ZD2, ZPs)
+                % fd_put(Z, ZD2, ZPs)
+                queue_goal(Z in NZMin..NZMax)
             ;   { X > 1, fd_get(Y, _, YL, _, _),
                   YL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZMin) cis n(X)^YL,
                   domain_remove_smaller_than(ZD, NZMin, ZD1) },
-                fd_put(Z, ZD1, ZPs)
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #>= NZMin)
             ;   { X > 1, fd_get(Z, ZD, ZPs) } ->
                 { domain_remove_smaller_than(ZD, 1, ZD1) },
-                fd_put(Z, ZD1, ZPs)
-            ;   { X == -1 } -> queue_goal(Z in -1\/1) % Infinite solution for Y.
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #> 0)
+            ;   { X =:= -1 } -> queue_goal(Z in -1\/1) % Infinite solution for Y.
             ;   { X < -1 } -> true % Chaos.
             )
         ;   nonvar(Y) ->
-            (   { Y > 0, fd_get(X, _, XL, XU, _), XU = n(_),
+            (   Y =:= 0 -> kill(MState), Z = 1
+            ;   Y =:= 1 -> kill(MState), Z = X
+            ;   { Y < 0, even(Y) } ->
+                queue_goal(Z #= 1)
+            ;   { Y < 0, odd(Y) } ->
+                queue_goal(Z in -1\/1)
+            ;   { Y > 0, fd_get(X, _, XL, XU, _), XU = n(_),
                   XL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(ZMin) cis XL^n(Y),
                   domain_remove_smaller_than(ZD, ZMin, ZD1),
                   n(ZMax) cis XU^n(Y),
                   domain_remove_greater_than(ZD1, ZMax, ZD2) },
-                fd_put(Z, ZD2, ZPs)
+                % fd_put(Z, ZD2, ZPs)
+                queue_goal(Z in ZMin..ZMax)
             ;   { Y > 0, fd_get(X, _, XL, _, _),
                   XL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(ZMin) cis XL^n(Y),
                   domain_remove_smaller_than(ZD, ZMin, ZD1) },
-                fd_put(Z, ZD1, ZPs)
-            ;   { Y < 0 } ->
-                queue_goal(Z in -1\/1)
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #>= ZMin)
             ;   { even(Y), fd_get(Z, ZD, ZPs) } ->
                 { domain_remove_smaller_than(ZD, 0, ZD1) },
-                fd_put(Z, ZD1, ZPs)
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #>= 0)
             ;   { odd(Y) } -> true % All the other cases.
             )
-        ;   (   { fd_get(X, _, XL, XU, _),
+        ;   (   { fd_get(X, _, XL, XU, _), XU = n(_),
                   XL cis_gt n(0),
-                  XU = n(_),
-                  fd_get(Y, _, YL, YU, _),
+                  fd_get(Y, _, YL, YU, _), YU = n(_),
                   YL cis_geq n(0),
-                  YU = n(_),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZL) cis XL^YL,
                   domain_remove_smaller_than(ZD, NZL, ZD1),
                   n(NZU) cis XU^YU,
                   domain_remove_greater_than(ZD1, NZU, ZD2) },
-                fd_put(Z, ZD2, ZPs)
-                % False.
-            ;   { false, fd_get(X, _, XL, XU, _),
+                % fd_put(Z, ZD2, ZPs)
+                queue_goal(Z in NZL..NZU)
+            ;   { fd_get(X, _, XL, _, _),
                   XL cis_gt n(0),
-                  fd_get(Y, _, YL, YU, _),
+                  fd_get(Y, _, YL, _, _),
                   YL cis_geq n(0),
-                  ( XU = sup -> true ; YU = sup ),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZL) cis XL^YL,
                   domain_remove_smaller_than(ZD, NZL, ZD1) },
-                fd_put(Z, ZD1, ZPs)
-                % Issue here.
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #>= NZL)
             ;   { fd_get(X, _, XL, _, _),
-                  XL cis_gt n(1),
+                  XL cis_gt n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { domain_remove_smaller_than(ZD, 1, ZD1) },
-                fd_put(Z, ZD1, ZPs)
+                % fd_put(Z, ZD1, ZPs)
+                queue_goal(Z #> 0)
             ;   true % Not enough information.
             )
         ).
@@ -5507,14 +5517,11 @@ run_propagator(pexpz(X, Y, Z), MState) -->
 run_propagator(pexpy(X, Y, Z), MState) -->
         % { write(y), nl },
         (   nonvar(Y) -> true % Nothing to do.
-        % TODO: remove this.
-        ;   X == -1 -> true % Infinite solution for Y.
-        ;   X == 0 -> queue_goal(Y #>= 0)
-        ;   X == 1 -> true % Infinite solution for Y.
-        ;   Z == 0 -> queue_goal(Y #> 0)
-        % ;   Z == -1 -> queue_goal(Y mod 2 #= 1) % Nice but how much useful?
         ;   nonvar(X) ->
-            (   { X > 1, fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+            (   X =:= -1 -> true % Infinite solution for Y.
+            ;   X =:= 0 -> queue_goal(Y #>= 0)
+            ;   X =:= 1 -> true % Infinite solution for Y.
+            ;   { X > 1, fd_get(Z, _, ZL, ZU, _), ZU = n(_),
                   ZL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { ZL = n(ZMin),
@@ -5523,19 +5530,27 @@ run_propagator(pexpy(X, Y, Z), MState) -->
                   ZU = n(ZMax),
                   floor_integer_log_b(ZMax, X, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
+                % fd_put(Y, YD2, YPs)
+                queue_goal(Y in YFloor..YCeil)
             ;   { X > 1, fd_get(Z, _, ZL, _, _),
                   ZL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { ZL = n(ZMin),
                   ceil_integer_log_b(ZMin, X, 0, YFloor),
                   domain_remove_smaller_than(YD, YFloor, YD1) },
-                fd_put(Y, YD1, YPs)
+                % fd_put(Y, YD1, YPs)
+                queue_goal(Y #>= YFloor)
             ;   { abs(X) > 1 } ->
                 queue_goal(Y #>= 0)
             )
         ;   nonvar(Z) ->
-            (   { Z > 1, fd_get(X, _, XL, n(XMax), _),
+            % The same could be done for X < -1
+            (   { Z =:= 1, fd_get(X, _, XL, _, _),
+                  XL cis_gt n(1) } ->
+                kill(MState),
+                Y = 0
+            ;   Z =:= 0 -> queue_goal(Y #> 0)
+            ;   { Z > 1, fd_get(X, _, XL, n(XMax), _),
                   XL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { ceil_integer_log_b(Z, XMax, 0, YFloor),
@@ -5543,27 +5558,25 @@ run_propagator(pexpy(X, Y, Z), MState) -->
                   XL = n(XMin),
                   floor_integer_log_b(Z, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
+                % fd_put(Y, YD2, YPs)
+                queue_goal(Y in YFloor..YCeil)
             ;   { Z > 1, fd_get(X, _, XL, _, _),
                   XL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { domain_remove_smaller_than(YD, 1, YD1),
                   XL = n(XMin),
-                  ceil_integer_log_b(Z, XMin, 1, YCeil),
+                  floor_integer_log_b(Z, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
+                % fd_put(Y, YD2, YPs)
+                queue_goal(Y in 1..YCeil)
             ;   { abs(Z) > 1, fd_get(Y, YD, YPs) } ->
-                { domain_remove_smaller_than(YD, 1, YD1) },
-                fd_put(Y, YD1, YPs)
-            % The same could be done for X < -1
-            ;   { Z == 1, fd_get(X, _, XL, _, _),
-                  XL cis_gt n(1) } ->
-                kill(MState),
-                Y = 0
+                { domain_remove_smaller_than(YD, 1, YD1),
+                  floor_integer_log_b(abs(Z), 2, 1, YCeil) },
+                % fd_put(Y, YD1, YPs)
+                queue_goal(Y in 1..YCeil)
             ;   true % abs(Z) =< 1.
             )
-                % False
-        ;   (   { false, fd_get(X, _, XL, XU, _), XU = n(_),
+        ;   (   { fd_get(X, _, XL, XU, _), XU = n(_),
                   XL cis_gt n(1),
                   fd_get(Z, _, ZL, ZU, _), ZU = n(_),
                   ZL cis_gt n(1),
@@ -5576,9 +5589,9 @@ run_propagator(pexpy(X, Y, Z), MState) -->
                   ZU = n(ZMax),
                   floor_integer_log_b(ZMax, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
-                % False
-            ;   { false, fd_get(X, _, XL, _, _),
+                % fd_put(Y, YD2, YPs)
+                queue_goal(Y in YFloor..YCeil)
+            ;   { fd_get(X, _, XL, _, _),
                   XL cis_gt n(1),
                   fd_get(Z, _, ZL, ZU, _), ZU = n(_),
                   ZL cis_gt n(1),
@@ -5588,23 +5601,32 @@ run_propagator(pexpy(X, Y, Z), MState) -->
                   ZU = n(ZMax),
                   floor_integer_log_b(ZMax, XMin, 1, YCeil),
                   domain_remove_greater_than(YD1, YCeil, YD2) },
-                fd_put(Y, YD2, YPs)
+                % fd_put(Y, YD2, YPs)
+                queue_goal(Y in 1..YCeil)
+            ;   { fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+                  ZL cis_gt n(1) } ->
+                { ZU = n(ZMax),
+                  floor_integer_log_b(ZMax, 2, 1, YCeil) },
+                queue_goal(Y in 1..YCeil)
             ;   { fd_get(Z, _, ZL, _, _),
                   ZL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { domain_remove_smaller_than(YD, 1, YD1) },
-                fd_put(Y, YD1, YPs)
-            % False: Is this worth?
+                % fd_put(Y, YD1, YPs)
+                queue_goal(Y #> 0)
+            % False: How much useful is this?
             ;   { false, fd_get(Z, _, _, ZU, _),
                   ZU cis_lt n(-1),
                   fd_get(Y, YD, YPs) } ->
                 { domain_remove_smaller_than(YD, 1, YD1) },
-                fd_put(Y, YD1, YPs)
+                % fd_put(Y, YD1, YPs)
+                queue_goal(Y #> 0)
             ;   { fd_get(X, _, XL, _, _),
                   XL cis_gt n(1),
                   fd_get(Y, YD, YPs) } ->
                 { domain_remove_smaller_than(YD, 0, YD1) },
-                fd_put(Y, YD1, YPs)
+                % fd_put(Y, YD1, YPs)
+                queue_goal(Y #>= 0)
             ;   true % Not enough information.
             )
         ).
@@ -5614,59 +5636,55 @@ run_propagator(pexpy(X, Y, Z), MState) -->
 run_propagator(pexpx(X, Y, Z), MState) -->
         % { write(x), nl },
         (   nonvar(X) -> true % Nothing to do.
-        % TODO: remove this.
-        ;   Z == 0 -> X = 0
-        ;   Z == -1 -> X = -1
         ;   nonvar(Y) ->
-            (   { Y < 0, fd_get(X, XD, XPs) } ->
+            (   { Y =:= 1 } -> kill(MState), X = Z
+            ;   { Y < 0, fd_get(X, XD, XPs) } ->
                 queue_goal(X in -1\/1)
             ;   { fd_get(Z, _, ZL, ZU, _), ZU = n(_),
-                  ZL cis_gt n(1) },
-                (   { even(Y) } ->
-                    true % TODO: compute the Yth root of ZL, ZU.
-                ;   true
-                )
+                  ZL cis_gt n(1) } ->
+                { ZU = n(ZMax),
+                  integer_kth_root_leq(ZMax, Y, XMax),
+                  NegXMax is -XMax },
+                queue_goal(X in NegXMax.. -2\/2..XMax)
             ;   { Y >= 0 } -> true % Infinite solution for X.
             )
         ;   nonvar(Z) ->
-            (   { Z > 1, NegZ is -Z } ->
+            (   Z =:= 0 -> queue_goal(X #= 0)
+            ;   Z =:= -1 -> queue_goal(X #= -1)
+            ;   { Z > 1, NegZ is -Z } ->
                 queue_goal(X in NegZ.. -2\/2..Z)
-            ;   { Z < -1, fd_get(X, XD, XPs) } ->
-                { domain_remove_smaller_than(XD, Z, XD1),
-                  domain_remove_greater_than(XD1, -2, XD2) },
-                fd_put(X, XD2, XPs)
-            ;   { Z == 1 } -> true % Infinite solution for X.
+            ;   { Z < -1 } ->
+                queue_goal(X in Z.. -2)
+            ;   { Z =:= 1, fd_get(Y, _, YL, _, _),
+                  YL cis_gt n(0) } ->
+                queue_goal(X in -1\/1)
+            ;   { Z =:= 1 } -> true % Infinite solution for X.
             )
-        ;   (   { fd_get(X, XD, XL, _, XPs), % Maybe bad.
-                  % This is for base manipulation.
-                  XL cis_gt n(1),
-                  fd_get(Z, _, ZL, ZU, _),
-                  ZU = n(ZMax),
-                  ZL cis_gt n(1) } ->
-                { domain_remove_greater_than(XD, ZMax, XD1) },
-                fd_put(X, XD1, XPs)
-            ;   { fd_get(Z, _, ZL, ZU, _), ZU = n(_),
+        ;   (   { fd_get(Z, _, ZL, ZU, _), ZU = n(_),
                   ZL cis_gt n(1) } ->
                 { ZU = n(ZMax),
                   NegZMax is -ZMax },
                 queue_goal(X in NegZMax.. -2\/2..ZMax)
-            ;   { fd_get(Z, _, ZL, ZU, _),
+            % False: Negative values, how much useful is this?
+            ;   { false, fd_get(Z, _, ZL, ZU, _),
                   ZL = n(ZMin),
                   ZU cis_lt n(1),
                   fd_get(X, XD, XPs) } ->
                 { domain_remove_smaller_than(XD, ZMin, XD1),
                   domain_remove_greater_than(XD1, -2, XD2) },
-                fd_put(X, XD2, XPs)
+                % fd_put(X, XD2, XPs)
+                queue_goal(X in ZMin.. -2)
             ;   { fd_get(Z, _, ZL, _, _),
                   ZL cis_gt n(1) } ->
                 % TODO: Intersection.
                 queue_goal(X in inf.. -2\/2..sup)
-            ;   { fd_get(Z, _, _, ZU, _),
+            % False: Negative values, how much useful is this?
+            ;   { false, fd_get(Z, _, _, ZU, _),
                   ZU cis_lt n(1),
-                  ZU = n(ZMax),
                   fd_get(X, XD, XPs) } ->
-                { domain_remove_greater_than(XD, ZMax, XD1) },
-                fd_put(X, XD1, XPs)
+                { domain_remove_greater_than(XD, 0, XD1) },
+                % fd_put(X, XD1, XPs)
+                queue_goal(X #=< 0)
             ;   true % Not enough information.
             )
         ).
