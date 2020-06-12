@@ -5415,6 +5415,26 @@ run_propagator(pexp(X,Y,Z), MState) -->
             ;   { X =:= 1 } -> kill(MState), Z =:= 1
             ;   { abs(Z) =:= 1 } -> X =:= -1
             )
+        ;   nonvar(X), Y == Z ->
+            (   { X =:= 0 } -> { false }
+            ;   { abs(X) > 1 } -> { false }
+            ;   { abs(X) =:= 1 } -> true
+            )
+        ;   nonvar(Y), Z == X ->
+            (   { Y < 0 } -> queue_goal(X in -1\/1)
+            ;   { Y =:= 0 } -> kill(MState), X = 1
+            ;   { Y =:= 1 } -> true % Infinite solution.
+            ;   { Y > 1 } -> queue_goal(X in -1..1)
+            )
+        ;   nonvar(Z), X == Y ->
+            (   { Z < -1 } -> { false }
+            ;   { Z =:= -1 } -> kill(MState), X = -1
+            ;   { Z =:= 0 } -> { false }
+            ;   { Z =:= 1 } -> kill(MState), queue_goal(X in 0..1)
+            ;   { Z > 1 } -> true
+            )
+        ;   X == Y, Y == Z ->
+            queue_goal(X in -1\/1)
         ;   run_propagator(pexpz(X, Y, Z), MState),
             run_propagator(pexpy(X, Y, Z), MState),
             run_propagator(pexpx(X, Y, Z), MState),
