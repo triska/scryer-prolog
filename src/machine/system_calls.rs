@@ -2022,11 +2022,10 @@ impl MachineState {
                 let mut stream =
                     self.get_stream_or_alias(self[temp_v!(1)], indices, "$put_bytes", 2)?;
 
-                let mut iter = self.heap_pstr_iter(self[temp_v!(2)]);
-                let mut bytes = Vec::new();
-                for c in iter.to_string().chars() {
+                let string = self.heap_pstr_iter(self[temp_v!(2)]).to_string();
+                let mut bytes = Vec::with_capacity(string.len());
+                for c in string.chars() {
                     if c as u32 > 255 {
-
                         let stub = MachineError::functor_stub(clause_name!("$put_bytes"), 2);
 
                         let err = MachineError::type_error(
