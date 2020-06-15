@@ -5380,6 +5380,23 @@ run_propagator(pexp_(X,Y,Z), MState) -->
         ).
 
 run_propagator(pexp(X,Y,Z), MState) -->
+        (   nonvar(X), Y == Z ->
+                { abs(X) =:= 1 }
+        ;   nonvar(Y), Z == X ->
+            (   { Y < 0 } -> queue_goal(X in -1\/1)
+            ;   { Y =:= 0 } -> kill(MState), X = 1
+            ;   { Y > 1 } -> queue_goal(X in -1..1)
+            ;   { Y =:= 1 } % Infinite solution.
+            )
+        ;   nonvar(Z), X == Y ->
+            (   { Z =:= -1 } -> kill(MState), X = -1
+            ;   { Z =:= 1 } -> kill(MState), queue_goal(X in 0..1)
+            ;   { Z > 1 }
+            )
+        ;   X == Y, Y == Z ->
+            queue_goal(X in -1\/1)
+        ;   true
+        ),
         (   nonvar(X), nonvar(Y) ->
             kill(MState),
             (   Y >= 0 -> true
@@ -5415,26 +5432,6 @@ run_propagator(pexp(X,Y,Z), MState) -->
             ;   { X =:= 1 } -> kill(MState), Z =:= 1
             ;   { abs(Z) =:= 1 } -> X =:= -1
             )
-        ;   nonvar(X), Y == Z ->
-            (   { X =:= 0 } -> { false }
-            ;   { abs(X) > 1 } -> { false }
-            ;   { abs(X) =:= 1 } -> true
-            )
-        ;   nonvar(Y), Z == X ->
-            (   { Y < 0 } -> queue_goal(X in -1\/1)
-            ;   { Y =:= 0 } -> kill(MState), X = 1
-            ;   { Y =:= 1 } -> true % Infinite solution.
-            ;   { Y > 1 } -> queue_goal(X in -1..1)
-            )
-        ;   nonvar(Z), X == Y ->
-            (   { Z < -1 } -> { false }
-            ;   { Z =:= -1 } -> kill(MState), X = -1
-            ;   { Z =:= 0 } -> { false }
-            ;   { Z =:= 1 } -> kill(MState), queue_goal(X in 0..1)
-            ;   { Z > 1 } -> true
-            )
-        ;   X == Y, Y == Z ->
-            queue_goal(X in -1\/1)
         ;   run_propagator(pexpz(X, Y, Z), MState),
             run_propagator(pexpy(X, Y, Z), MState),
             run_propagator(pexpx(X, Y, Z), MState),
@@ -5448,7 +5445,10 @@ run_propagator(pexpz(X, Y, Z), MState) -->
         % { write(z), nl },
         (   nonvar(Z) -> true % Nothing to do.
         ;   nonvar(X) ->
-            (   X =:= 0 -> kill(MState), queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
+            (   { false, X =:= 0 } -> % This doesn't seem helpful.
+                kill(MState),
+                queue_goal((Z in 0..1, Y #>= 0, Z #<==> Y #= 0))
+            ;   { X =:= 0 } -> queue_goal((Z in 0..1, Y #>= 0))
             ;   X =:= 1 -> kill(MState), Z = 1
             ;   { X > 1, fd_get(Y, _, YL, YU, _), YU = n(_),
                   YL cis_geq n(0),
@@ -5471,7 +5471,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                 % fd_put(Z, ZD1, ZPs)
                 queue_goal(Z #> 0)
             ;   { X =:= -1 } -> queue_goal(Z in -1\/1) % Infinite solution for Y.
-            ;   { X < -1 } -> true % Chaos.
+            ;   { X < -1 } % Chaos.
             )
         ;   nonvar(Y) ->
             (   Y =:= 0 -> kill(MState), Z = 1
@@ -5500,7 +5500,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                 { domain_remove_smaller_than(ZD, 0, ZD1) },
                 % fd_put(Z, ZD1, ZPs)
                 queue_goal(Z #>= 0)
-            ;   { odd(Y) } -> true % All the other cases.
+            ;   { odd(Y) } % All the other cases.
             )
         ;   (   { fd_get(X, _, XL, XU, _), XU = n(_),
                   XL cis_gt n(0),
@@ -5666,7 +5666,7 @@ run_propagator(pexpx(X, Y, Z), MState) -->
                   integer_kth_root_leq(ZMax, Y, XMax),
                   NegXMax is -XMax },
                 queue_goal(X in NegXMax.. -2\/2..XMax)
-            ;   { Y >= 0 } -> true % Infinite solution for X.
+            ;   { Y >= 0 } % Infinite solution for X.
             )
         ;   nonvar(Z) ->
             (   Z =:= 0 -> queue_goal(X #= 0)
@@ -5678,7 +5678,7 @@ run_propagator(pexpx(X, Y, Z), MState) -->
             ;   { Z =:= 1, fd_get(Y, _, YL, _, _),
                   YL cis_gt n(0) } ->
                 queue_goal(X in -1\/1)
-            ;   { Z =:= 1 } -> true % Infinite solution for X.
+            ;   { Z =:= 1 } % Infinite solution for X.
             )
         ;   (   { fd_get(Z, _, ZL, ZU, _), ZU = n(_),
                   ZL cis_gt n(1) } ->
