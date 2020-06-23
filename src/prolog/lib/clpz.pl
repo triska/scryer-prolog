@@ -5459,7 +5459,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                   domain_remove_greater_than(ZD1, NZMax, ZD2) },
                 % fd_put(Z, ZD2, ZPs)
                 queue_goal(Z in NZMin..NZMax)
-            ;   { X > 1, fd_get(Y, _, YL, _, _),
+            ;   { false, X > 1, fd_get(Y, _, YL, _, _),
                   YL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(NZMin) cis n(X)^YL,
@@ -5489,7 +5489,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                   domain_remove_greater_than(ZD1, ZMax, ZD2) },
                 % fd_put(Z, ZD2, ZPs)
                 queue_goal(Z in ZMin..ZMax)
-            ;   { Y > 0, fd_get(X, _, XL, _, _),
+            ;   { false, Y > 0, fd_get(X, _, XL, _, _),
                   XL cis_geq n(0),
                   fd_get(Z, ZD, ZPs) } ->
                 { n(ZMin) cis XL^n(Y),
@@ -5513,7 +5513,7 @@ run_propagator(pexpz(X, Y, Z), MState) -->
                   domain_remove_greater_than(ZD1, NZU, ZD2) },
                 % fd_put(Z, ZD2, ZPs)
                 queue_goal(Z in NZL..NZU)
-            ;   { fd_get(X, _, XL, _, _),
+            ;   { false, fd_get(X, _, XL, _, _),
                   XL cis_gt n(0),
                   fd_get(Y, _, YL, _, _),
                   YL cis_geq n(0),
