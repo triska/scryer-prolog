@@ -120,9 +120,7 @@ n_limes(D, Cond, R, S0,S) :-
 % A debugger:
 
 
-% We can use a list of operators once #839 is resolved.
-:- op(900, fy, $).
-:- op(900, fy, @).
+:- op(900, fy, [$,@]).
 
 uwnportray(T) :- write_term(T,[quoted(true)]),nl.
 
