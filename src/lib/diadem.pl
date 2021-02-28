@@ -10,13 +10,6 @@
 
 Explanations for pure, monotonic programs.
 
-Recommended settings in .plrc:
-
-==
-:- set_prolog_flag(double_quotes, chars).
-:- use_module(library(double_quotes)).
-==
-
 Consider that you have a failing goal.  Say
 
 ==
@@ -58,22 +51,10 @@ http://www.complang.tuwien.ac.at/ulrich/Prolog-inedit/double_quotes.pl
 */
 
 :- use_module(library(error)).
-:- use_module(library(apply)).
+:- use_module(library(lists)).
 :- use_module(library(lambda)).
-
-/*
-
-Get library(lambda) from
-http://www.complang.tuwien.ac.at/ulrich/Prolog-inedit/lambda.pl
-
-I use it with the following lines in my .plrc:
-
-:- multifile library_directory/1.
-
-library_directory('/home/ulrich/lftp/Prolog-inedit').
-
-*/
-
+:- use_module(library(dcgs)).
+:- use_module(library(dif)).
 
 % Definitions that should go in some library:
 
@@ -111,7 +92,9 @@ n_limes(D, Cond, R, S0,S) :-
 % A debugger:
 
 
-:- op(900, fy, [$,@]).
+% We can use a list of operators once #839 is resolved.
+:- op(900, fy, $).
+:- op(900, fy, @).
 
 uwnportray(T) :- write_term(T,[quoted(true)]),nl.
 
@@ -176,7 +159,7 @@ query_generalizedfailure(Query0,Query) :-
 	limes(\X^callf(\+X), query_generalized, Query0,Query1),
 	(	Query1 = Query
 	;	limes(\X^callf(\+X), goal_difgeneralisation, Query1, Query2),
-		(	\+ Query1 =@= Query2,
+		(   \+ variant(Query1, Query2),
 				Query2 = Query
 		;	false,
 			limes(\X^callf(\+X), goal_equalitygeneralisation, Query2, Query)
@@ -205,7 +188,7 @@ must_be_monotonic(NM) :-
 nonmonotonic((_->_)).
 nonmonotonic(!).
 nonmonotonic((\+_)).
-nonmonotonic((_*->_)).
+nonmonotonic(*->(_,_)).
 nonmonotonic(nonvar(_)). % var/1 alone is ok!
 % Should be extended.
 
@@ -242,7 +225,7 @@ harmless_error(occurs_check(_TermA, _TermB)).
 
 query_generalized(Query, QueryG) :-
 	goal_generalized(Query, QueryG),
-	\+ Query =@= QueryG.
+	\+ variant(Query, QueryG).
 
 goal_generalized(Goal, _) :-
 	var(Goal),
