@@ -21,8 +21,7 @@ To see a better reason why this fails:
 
 ==
 ?- use_module(library(diadem)).
-% library(diadem) compiled into diadem 0.01 sec, 8,600 bytes
-true.
+   true.
 ==
 
 Now, press <Arrow up> <Arrow up> ? X . <Return> to get:
@@ -55,6 +54,7 @@ http://www.complang.tuwien.ac.at/ulrich/Prolog-inedit/double_quotes.pl
 :- use_module(library(lambda)).
 :- use_module(library(dcgs)).
 :- use_module(library(dif)).
+:- use_module(library(iso_ext)).
 
 % Definitions that should go in some library:
 
@@ -68,6 +68,33 @@ seq([E|Es]) --> [E], seq(Es).
 seqq([]) --> [].
 seqq([Es|Ess]) --> seq(Es), seqq(Ess).
 
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+   Simulate a soft cut in ISO Prolog, taken from:
+   https://stackoverflow.com/a/40640643
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+:- dynamic(if_counter/1).
+
+if_counter(0).
+
+retractall(Head) :- retract(Head), false.
+retractall(_).
+
+:- dynamic(no_if_answer/1).
+if(If_0, Then_0, Else_0) :-
+   once(if_counter(Id)),
+   Idx is Id+1,
+   retractall(if_counter(_)),
+   asserta(if_counter(Idx)),
+   asserta(no_if_answer(Id)),
+   (  If_0,
+      retractall(no_if_answer(Id)),
+      Then_0
+   ;  retract(no_if_answer(Id)) ->
+      Else_0
+   ).
+
 :- meta_predicate limes(1,2,?,?).
 
 %	limes(Cond, R, S0,S) :-
@@ -75,19 +102,17 @@ seqq([Es|Ess]) --> seq(Es), seqq(Ess).
 
 limes(Cond, R, S0,S) :-
 	call(Cond, S0),
-	(	call(R, S0,S1),
-		limes(Cond, R, S1,S)
-	*->true
-	;	S0 = S
-	).
+   if((call(R, S0,S1),
+       limes(Cond, R, S1,S)),
+	   true,
+	   S0 = S).
 
 n_limes(D, Cond, R, S0,S) :-
 	call(Cond, S0),
-	(	call(R, S0,S1),
-		n_limes(D+1, Cond, R, S1,S)
-	*->true
-	;	S0 = S
-	).
+	if((call(R, S0,S1),
+       n_limes(D+1, Cond, R, S1,S)),
+      true,
+      S0 = S).
 
 % A debugger:
 
@@ -116,7 +141,7 @@ $(C,V1,V2,V3,V4,V5,V6) :-
 $(C,V1,V2,V3,V4,V5,V6,V7) :-
 	$call(C,V1,V2,V3,V4,V5,V6,V7).
 
-@(C) :- ( C *-> true ; throw(goal_failed(C)) ).
+@(C) :- if(C, true, throw(goal_failed(C))).
 @(C,V1) :-
 	@call(C,V1).
 @(C,V1,V2) :-
@@ -138,15 +163,17 @@ $(C,V1,V2,V3,V4,V5,V6,V7) :-
 	MExplanation = Module:Explanation,
 	MQuery = Module:XQuery,
 	must_be(var, Explanation),
-	must_be(callable, MQuery),
+	%must_be(callable, MQuery),
 	must_be_monotonic(MQuery),
 	strip_module(MQuery, _, Query),
-	setup_call_cleanup(
-		current_prolog_flag(occurs_check, OC),
-			(	set_prolog_flag(occurs_check, error),
-				\+ \+ MQuery = Explanation
-			),
-		set_prolog_flag(occurs_check,OC)),
+	% setup_call_cleanup(
+	% 	current_prolog_flag(occurs_check, OC),
+	% 		(	set_prolog_flag(occurs_check, error),
+	% 			\+ \+ MQuery = Explanation
+	% 		),
+	% 	set_prolog_flag(occurs_check,OC)),
+   %%% until #309 is resolved, we only use:
+            \+ \+ MQuery = Explanation,
 	query_generalizedfailure(Query,QueryG),
 	QueryG = Explanation,
 	do_name_variables(MQuery, Explanation).
