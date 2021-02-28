@@ -167,14 +167,12 @@ $(C,V1,V2,V3,V4,V5,V6,V7) :-
 	%must_be(callable, MQuery),
 	must_be_monotonic(MQuery),
 	strip_module(MQuery, _, Query),
-	% setup_call_cleanup(
-	% 	current_prolog_flag(occurs_check, OC),
-	% 		(	set_prolog_flag(occurs_check, error),
-	% 			\+ \+ MQuery = Explanation
-	% 		),
-	% 	set_prolog_flag(occurs_check,OC)),
-   %%% until #309 is resolved, we only use:
-            \+ \+ MQuery = Explanation,
+	setup_call_cleanup(
+		current_prolog_flag(occurs_check, OC),
+			(	set_prolog_flag(occurs_check, error),
+				\+ \+ MQuery = Explanation
+			),
+		set_prolog_flag(occurs_check,OC)),
 	query_generalizedfailure(Query,QueryG),
 	QueryG = Explanation,
 	do_name_variables(MQuery, Explanation).
