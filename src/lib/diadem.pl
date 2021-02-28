@@ -82,6 +82,9 @@ retractall(Head) :- retract(Head), false.
 retractall(_).
 
 :- dynamic(no_if_answer/1).
+
+:- meta_predicate if(0, 0, 0).
+
 if(If_0, Then_0, Else_0) :-
    once(if_counter(Id)),
    Idx is Id+1,
