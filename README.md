@@ -223,6 +223,29 @@ instance, after consulting the program above, typing `decl` followed
 by&nbsp;`TAB` yields `declarative_world`. Press&nbsp;`TAB` repeatedly
 to cycle through alternative completions.
 
+When reporting solutions, the toplevel uses a *depth&nbsp;limit* to
+print terms. For example, long strings are truncated:
+
+<pre>
+?- Ls = "Hello, declarative world!".
+<b>   Ls = "Hello, declarative  ...".</b>
+</pre>
+
+To write such terms *without* depth&nbsp;limit, press&nbsp;`w` during
+the interaction. If the query succeeds deterministically, introduce a
+choicepoint to make the toplevel ask how to proceed, so that you can
+press&nbsp;`w` after the answer is emitted:
+
+<pre>
+?- Ls = "Hello, declarative world!" <b>; false.</b>
+   Ls = "Hello, declarative  ..."   <i>% press "<b>w</b>"</i>
+<b>   Ls = "Hello, declarative world!"</b>
+;  false.
+</pre>
+
+During the interaction, press&nbsp;`p` to reenable the
+depth&nbsp;limit for printing. Press `h` for help.
+
 To quit Scryer Prolog, use the standard predicate `halt/0`:
 
 ```
