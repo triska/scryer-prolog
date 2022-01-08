@@ -490,8 +490,6 @@ enum SystemClauseType {
     CryptoDataEncrypt,
     #[strum_discriminants(strum(props(Arity = "6", Name = "$crypto_data_decrypt")))]
     CryptoDataDecrypt,
-    #[strum_discriminants(strum(props(Arity = "5", Name = "$crypto_curve_scalar_mult")))]
-    CryptoCurveScalarMult,
     #[strum_discriminants(strum(props(Arity = "4", Name = "$ed25519_sign")))]
     Ed25519Sign,
     #[strum_discriminants(strum(props(Arity = "4", Name = "$ed25519_verify")))]
@@ -1693,7 +1691,6 @@ fn generate_instruction_preface() -> TokenStream {
                     &Instruction::CallCryptoPasswordHash(_) |
                     &Instruction::CallCryptoDataEncrypt(_) |
                     &Instruction::CallCryptoDataDecrypt(_) |
-                    &Instruction::CallCryptoCurveScalarMult(_) |
                     &Instruction::CallEd25519Sign(_) |
                     &Instruction::CallEd25519Verify(_) |
                     &Instruction::CallEd25519NewKeyPair(_) |
@@ -1895,7 +1892,6 @@ fn generate_instruction_preface() -> TokenStream {
                     &Instruction::ExecuteCryptoPasswordHash(_) |
                     &Instruction::ExecuteCryptoDataEncrypt(_) |
                     &Instruction::ExecuteCryptoDataDecrypt(_) |
-                    &Instruction::ExecuteCryptoCurveScalarMult(_) |
                     &Instruction::ExecuteEd25519Sign(_) |
                     &Instruction::ExecuteEd25519Verify(_) |
                     &Instruction::ExecuteEd25519NewKeyPair(_) |

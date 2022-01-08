@@ -4391,14 +4391,6 @@ impl Machine {
                     self.crypto_data_decrypt();
                     step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                 }
-                &Instruction::CallCryptoCurveScalarMult(_) => {
-                    self.crypto_curve_scalar_mult();
-                    step_or_fail!(self, self.machine_st.p += 1);
-                }
-                &Instruction::ExecuteCryptoCurveScalarMult(_) => {
-                    self.crypto_curve_scalar_mult();
-                    step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
-                }
                 &Instruction::CallEd25519Sign(_) => {
                     self.ed25519_sign();
                     step_or_fail!(self, self.machine_st.p += 1);
