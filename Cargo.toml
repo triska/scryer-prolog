@@ -66,7 +66,7 @@ ryu = "1.0.9"
 hyper = { version = "0.14", features = ["full"] }
 hyper-tls = "0.5.0"
 tokio = { version = "1", features = ["full"] }
-elliptic_curve = "0.12.2"
+k256 = { version = "0.11.3", features = ["arithmetic"] }
 
 [dev-dependencies]
 assert_cmd = "1.0.3"
