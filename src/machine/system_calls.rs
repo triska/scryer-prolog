@@ -6125,11 +6125,11 @@ impl Machine {
         let stub_gen = || functor_stub(atom!("crypto_curve_scalar_mult"), 5);
 
         let sbytes = self.machine_st.integers_to_bytevec(self.machine_st.registers[2], stub_gen);
-        let s = FieldElement::from_bytes(sbytes).unwrap();
+        let s = PrimeField::from_repr(sbytes).unwrap();
 
         let qbytes = self.machine_st.integers_to_bytevec(self.machine_st.registers[3], stub_gen);
 
-        let mut q = FieldElement::from_bytes(&qbytes).unwrap();
+        let mut q = AffinePoint::from_bytes(&qbytes).unwrap();
         let result = q.mul(s);
 
         let enc = result.to_encoded_point(false);
