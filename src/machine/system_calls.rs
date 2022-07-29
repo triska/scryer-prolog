@@ -67,7 +67,7 @@ use ring::{
 use ripemd160::{Digest, Ripemd160};
 use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
 
-use k256::{Scalar, AffinePoint};
+use k256::{Scalar, AffinePoint, elliptic_curve::ff:PrimeField};
 
 use sodiumoxide::crypto::scalarmult::curve25519::*;
 
