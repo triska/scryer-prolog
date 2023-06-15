@@ -834,43 +834,6 @@ impl MachineState {
     ) -> CallResult {
         let nx = self.store(self.deref(self.registers[2]));
 
-        let mut charcode_space = false;
-        let mut cs = string.chars();
-
-        loop {
-            let c = cs.next();
-
-            if c == None {
-                break;
-            }
-
-            if c == Some('0')
-                && cs.next() == Some('\'')
-                && cs.next() == Some(' ')
-                && cs.next() == None {
-                charcode_space = true;
-                break;
-            }
-        }
-
-        if !charcode_space {
-            if let Some(c) = string.chars().last() {
-                if layout_char!(c) {
-                    let (line_num, col_num) = string.chars().fold((0, 0), |(line_num, col_num), c| {
-                        if new_line_char!(c) {
-                            (1 + line_num, 0)
-                        } else {
-                            (line_num, col_num + 1)
-                        }
-                    });
-                    let err = ParserError::UnexpectedChar(c, line_num, col_num);
-                    let err = self.syntax_error(err);
-
-                    return Err(self.error_form(err, stub_gen()));
-                }
-            }
-        }
-
         let mut dot_buf: [u8; '.'.len_utf8()] = [0u8];
         '.'.encode_utf8(&mut dot_buf);
 
@@ -902,6 +865,13 @@ impl MachineState {
 
                 return Err(self.error_form(err, stub_gen()));
             }
+        }
+
+        if !parser.eof().unwrap() {
+            let err = ParserError::ParseBigInt(0, 0);
+            let err = self.syntax_error(err);
+
+            return Err(self.error_form(err, stub_gen()));
         }
 
         Ok(())
