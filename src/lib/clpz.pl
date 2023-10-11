@@ -5922,10 +5922,12 @@ run_propagator(preified_slash(X, Y, D, R), MState) -->
         ;   nonvar(X),
             nonvar(Y) ->
             kill(MState),
-            (   X mod Y =:= 0 ->
+            { Goal = ( X mod Y =:= 0 ) },
+            (   { Goal } ->
                 D = 1,
                 R is X // Y
-            ;   D = 0
+            ;   { portray_clause(\+ Goal) },
+                D = 0
             )
         ;   D == 1 ->
             kill(MState),
