@@ -67,9 +67,6 @@ http://www.complang.tuwien.ac.at/ulrich/Prolog-inedit/double_quotes.pl
 
 if_counter(0).
 
-retractall(Head) :- retract(Head), false.
-retractall(_).
-
 :- dynamic(no_if_answer/1).
 
 :- meta_predicate if(0, 0, 0).
