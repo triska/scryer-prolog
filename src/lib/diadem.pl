@@ -58,17 +58,6 @@ http://www.complang.tuwien.ac.at/ulrich/Prolog-inedit/double_quotes.pl
 
 % Definitions that should go in some library:
 
-% General DCGs
-
-... --> [] | [_], ... .
-
-seq([]) --> [].
-seq([E|Es]) --> [E], seq(Es).
-
-seqq([]) --> [].
-seqq([Es|Ess]) --> seq(Es), seqq(Ess).
-
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
    Simulate a soft cut in ISO Prolog, taken from:
    https://stackoverflow.com/a/40640643
