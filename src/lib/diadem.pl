@@ -171,7 +171,7 @@ query_generalizedfailure(Query0,Query) :-
 	limes(\X^callf(\+X), query_generalized, Query0,Query1),
 	(	Query1 = Query
 	;	limes(\X^callf(\+X), goal_difgeneralisation, Query1, Query2),
-		(   \+ variant(Query1, Query2),
+		(   \+ builtins:variant(Query1, Query2),
 				Query2 = Query
 		;	false,
 			limes(\X^callf(\+X), goal_equalitygeneralisation, Query2, Query)
@@ -237,7 +237,7 @@ harmless_error(occurs_check(_TermA, _TermB)).
 
 query_generalized(Query, QueryG) :-
 	goal_generalized(Query, QueryG),
-	\+ variant(Query, QueryG).
+	\+ builtins:variant(Query, QueryG).
 
 goal_generalized(Goal, _) :-
 	var(Goal),
