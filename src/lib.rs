@@ -12,6 +12,9 @@ pub mod macros;
 pub mod atom_table;
 #[macro_use]
 pub mod arena;
+pub mod types;
+#[macro_use]
+pub mod functor_macro;
 #[macro_use]
 pub mod parser;
 mod allocator;
@@ -38,7 +41,6 @@ pub mod read;
 #[cfg(feature = "repl")]
 mod repl_helper;
 mod targets;
-pub mod types;
 
 use instructions::instr;
 

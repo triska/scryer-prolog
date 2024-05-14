@@ -349,6 +349,10 @@ cells([~|Fs0], Args0, Tab, Es, VNs) -->
         cell(Tab, Num, Es),
         cells(Fs, Args, Num, [], VNs).
 cells([~|Fs0], Args0, Tab0, Es, VNs) -->
+        % { write_term(numeric_argument(Fs0, Num, [+|Fs], Args0, Args),
+        %              [variable_names(['Fs0' = Fs0, 'Num' = Num, 'Fs' = Fs, 'Args0' = Args0,
+        %                               'Args' = Args])])
+        % },
         { numeric_argument(Fs0, Num, [+|Fs], Args0, Args) },
         !,
         (   { ground(Tab0+Num) } ->

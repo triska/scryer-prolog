@@ -1,5 +1,6 @@
 use crate::arena::*;
 use crate::atom_table::*;
+use crate::functor_macro::*;
 use crate::instructions::*;
 use crate::machine::arithmetic_ops::*;
 use crate::machine::machine_errors::*;
@@ -14,6 +15,7 @@ use fxhash::FxBuildHasher;
 macro_rules! step_or_fail {
     ($self:expr, $step_e:expr) => {
         if $self.machine_st.fail {
+            // println!("failing at {}", $self.machine_st.p);
             $self.machine_st.backtrack();
         } else {
             $step_e;
@@ -26,12 +28,24 @@ macro_rules! try_or_throw {
         match $e {
             Ok(val) => val,
             Err(msg) => {
-                $s.throw_exception(msg);
+                if !msg.is_empty() {
+                    $s.throw_exception(msg);
+                }
+
                 $s.backtrack();
                 continue;
             }
         }
     }};
+}
+
+macro_rules! backtrack_on_resource_error {
+    ($machine_st:expr, $val:expr) => {
+        step_or_resource_error!($machine_st, $val, {
+            $machine_st.backtrack();
+            continue;
+        })
+    };
 }
 
 macro_rules! increment_call_count {
@@ -54,6 +68,15 @@ macro_rules! try_or_throw_gen {
                 continue;
             }
         }
+    }};
+}
+
+macro_rules! push_cell {
+    ($machine_st:expr, $cell:expr) => {{
+        step_or_resource_error!($machine_st, $machine_st.heap.push_cell($cell), {
+            $machine_st.backtrack();
+            continue;
+        })
     }};
 }
 
@@ -115,12 +138,15 @@ impl MachineState {
     }
 
     pub fn copy_term(&mut self, attr_var_policy: AttrVarPolicy) {
-        let old_h = self.heap.len();
+        let old_h = self.heap.cell_len();
 
         let a1 = self.registers[1];
         let a2 = self.registers[2];
 
-        copy_term(CopyTerm::new(self), a1, attr_var_policy);
+        step_or_resource_error!(
+            self,
+            copy_term(CopyTerm::new(self), a1, attr_var_policy)
+        );
 
         unify_fn!(*self, heap_loc_as_cell!(old_h), a2);
     }
@@ -137,10 +163,16 @@ impl MachineState {
 
         list.dedup_by(|v1, v2| compare_term_test!(self, *v1, *v2) == Some(Ordering::Equal));
 
-        let heap_addr = heap_loc_as_cell!(iter_to_heap_list(&mut self.heap, list.into_iter()));
+        let heap_addr = resource_error_call_result!(
+            self,
+            sized_iter_to_heap_list(
+                &mut self.heap,
+                list.len(),
+                list.into_iter(),
+            )
+        );
 
         let target_addr = self.registers[2];
-
         unify_fn!(*self, target_addr, heap_addr);
         Ok(())
     }
@@ -162,8 +194,14 @@ impl MachineState {
             compare_term_test!(self, a1.0, a2.0, var_comparison).unwrap_or(Ordering::Less)
         });
 
-        let key_pairs = key_pairs.into_iter().map(|kp| kp.1);
-        let heap_addr = heap_loc_as_cell!(iter_to_heap_list(&mut self.heap, key_pairs));
+        let heap_addr = resource_error_call_result!(
+            self,
+            sized_iter_to_heap_list(
+                &mut self.heap,
+                key_pairs.len(),
+                key_pairs.into_iter().map(|kp| kp.1),
+            )
+        );
 
         let target_addr = self.registers[2];
 
@@ -203,13 +241,13 @@ impl MachineState {
                 v
             }
             (HeapCellValueTag::PStrLoc |
-             HeapCellValueTag::Lis |
-             HeapCellValueTag::CStr) => {
+             HeapCellValueTag::Lis) => {
+             // HeapCellValueTag::CStr) => {
                 l
             }
             (HeapCellValueTag::Fixnum |
              HeapCellValueTag::CutPoint |
-             HeapCellValueTag::Char |
+             // HeapCellValueTag::Char |
              HeapCellValueTag::F64) => {
                 c
             }
@@ -244,6 +282,7 @@ impl MachineState {
         )
     }
 
+    /*
     #[inline(always)]
     pub(crate) fn constant_to_literal(&self, addr: HeapCellValue) -> Literal {
         read_heap_cell!(addr,
@@ -290,6 +329,7 @@ impl MachineState {
             }
         )
     }
+    */
 
     #[inline(always)]
     pub(crate) fn select_switch_on_structure_index(
@@ -466,9 +506,9 @@ impl Machine {
                     }
                 }
                 IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(hm)) => {
-                    let lit = self.machine_st.constant_to_literal(addr);
+                    // let lit = self.machine_st.constant_to_literal(addr);
 
-                    let offset = match hm.get(&lit) {
+                    let offset = match hm.get(&addr) {
                         Some(offset) => *offset,
                         _ => IndexingCodePtr::Fail,
                     };
@@ -1215,22 +1255,32 @@ impl Machine {
                         self.machine_st.allocate(num_cells);
                     }
                     &Instruction::DefaultCallAcyclicTerm => {
-                        let addr = self.machine_st.registers[1];
+                        let addr = self.deref_register(1);
 
-                        if self.machine_st.is_cyclic_term(addr) {
-                            self.machine_st.backtrack();
-                        } else {
-                            self.machine_st.p += 1;
+                        if addr.is_ref() {
+                            self.machine_st.heap[0] = addr;
+
+                            if self.machine_st.is_cyclic_term(0) {
+                                self.machine_st.backtrack();
+                                continue;
+                            }
                         }
+
+                        self.machine_st.p += 1;
                     }
                     &Instruction::DefaultExecuteAcyclicTerm => {
-                        let addr = self.machine_st.registers[1];
+                        let addr = self.deref_register(1);
 
-                        if self.machine_st.is_cyclic_term(addr) {
-                            self.machine_st.backtrack();
-                        } else {
-                            self.machine_st.p = self.machine_st.cp;
+                        if addr.is_ref() {
+                            self.machine_st.heap[0] = addr;
+
+                            if self.machine_st.is_cyclic_term(0) {
+                                self.machine_st.backtrack();
+                                continue;
+                            }
                         }
+
+                        self.machine_st.p = self.machine_st.cp;
                     }
                     &Instruction::DefaultCallArg => {
                         try_or_throw!(self.machine_st, self.machine_st.try_arg());
@@ -1467,24 +1517,34 @@ impl Machine {
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallAcyclicTerm => {
-                        let addr = self.machine_st.registers[1];
+                        let addr = self.deref_register(1);
 
-                        if self.machine_st.is_cyclic_term(addr) {
-                            self.machine_st.backtrack();
-                        } else {
-                            increment_call_count!(self.machine_st);
-                            self.machine_st.p += 1;
+                        if addr.is_ref() {
+                            self.machine_st.heap[0] = addr;
+
+                            if self.machine_st.is_cyclic_term(0) {
+                                self.machine_st.backtrack();
+                                continue;
+                            }
                         }
+
+                        increment_call_count!(self.machine_st);
+                        self.machine_st.p += 1;
                     }
                     &Instruction::ExecuteAcyclicTerm => {
-                        let addr = self.machine_st.registers[1];
+                        let addr = self.deref_register(1);
 
-                        if self.machine_st.is_cyclic_term(addr) {
-                            self.machine_st.backtrack();
-                        } else {
-                            increment_call_count!(self.machine_st);
-                            self.machine_st.p = self.machine_st.cp;
+                        if addr.is_ref() {
+                            self.machine_st.heap[0] = addr;
+
+                            if self.machine_st.is_cyclic_term(0) {
+                                self.machine_st.backtrack();
+                                continue;
+                            }
                         }
+
+                        increment_call_count!(self.machine_st);
+                        self.machine_st.p = self.machine_st.cp;
                     }
                     &Instruction::CallArg => {
                         try_or_throw!(self.machine_st, self.machine_st.try_arg());
@@ -2252,9 +2312,11 @@ impl Machine {
                                     self.machine_st.backtrack();
                                 }
                             }
+                            /*
                             (HeapCellValueTag::Char) => {
                                 self.machine_st.p += 1;
                             }
+                            */
                             _ => {
                                 self.machine_st.backtrack();
                             }
@@ -2283,9 +2345,11 @@ impl Machine {
                                     self.machine_st.backtrack();
                                 }
                             }
+                            /*
                             (HeapCellValueTag::Char) => {
                                 self.machine_st.p = self.machine_st.cp;
                             }
+                            */
                             _ => {
                                 self.machine_st.backtrack();
                             }
@@ -2297,7 +2361,7 @@ impl Machine {
                             .store(self.machine_st.deref(self.machine_st[r]));
 
                         read_heap_cell!(d,
-                            (HeapCellValueTag::Char | HeapCellValueTag::Fixnum | HeapCellValueTag::F64 |
+                            (HeapCellValueTag::Fixnum | HeapCellValueTag::F64 | // HeapCellValueTag::Char |
                              HeapCellValueTag::Cons) => {
                                 self.machine_st.p += 1;
                             }
@@ -2329,7 +2393,7 @@ impl Machine {
                             .store(self.machine_st.deref(self.machine_st[r]));
 
                         read_heap_cell!(d,
-                            (HeapCellValueTag::Char | HeapCellValueTag::Fixnum | HeapCellValueTag::F64 |
+                            (HeapCellValueTag::Fixnum | HeapCellValueTag::F64 | // HeapCellValueTag::Char |
                              HeapCellValueTag::Cons) => {
                                 self.machine_st.p = self.machine_st.cp;
                             }
@@ -2362,8 +2426,8 @@ impl Machine {
 
                         read_heap_cell!(d,
                             (HeapCellValueTag::Lis |
-                             HeapCellValueTag::PStrLoc |
-                             HeapCellValueTag::CStr) => {
+                             HeapCellValueTag::PStrLoc) => {
+                             // HeapCellValueTag::CStr) => {
                                 self.machine_st.p += 1;
                             }
                             (HeapCellValueTag::Str, s) => {
@@ -2395,8 +2459,8 @@ impl Machine {
 
                         read_heap_cell!(d,
                             (HeapCellValueTag::Lis |
-                             HeapCellValueTag::PStrLoc |
-                             HeapCellValueTag::CStr) => {
+                             HeapCellValueTag::PStrLoc) => {
+                             // HeapCellValueTag::CStr) => {
                                 self.machine_st.p = self.machine_st.cp;
                             }
                             (HeapCellValueTag::Str, s) => {
@@ -2690,8 +2754,7 @@ impl Machine {
                         self.machine_st.p = self.machine_st.cp;
                     }
                     &Instruction::GetConstant(_, c, reg) => {
-                        let value = self.machine_st.deref(self.machine_st[reg]);
-                        self.machine_st.write_literal_to_var(value, c);
+                        unify!(self.machine_st, self.machine_st[reg], c);
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::GetList(_, reg) => {
@@ -2700,17 +2763,7 @@ impl Machine {
 
                         read_heap_cell!(store_v,
                             (HeapCellValueTag::PStrLoc, h) => {
-                                let (h, n) = pstr_loc_and_offset(&self.machine_st.heap, h);
-
-                                self.machine_st.s = HeapPtr::PStrChar(h, n.get_num() as usize);
-                                self.machine_st.s_offset = 0;
-                                self.machine_st.mode = MachineMode::Read;
-                            }
-                            (HeapCellValueTag::CStr) => {
-                                let h = self.machine_st.heap.len();
-                                self.machine_st.heap.push(store_v);
-
-                                self.machine_st.s = HeapPtr::PStrChar(h, 0);
+                                self.machine_st.s = HeapPtr::PStr(h);
                                 self.machine_st.s_offset = 0;
                                 self.machine_st.mode = MachineMode::Read;
                             }
@@ -2733,9 +2786,9 @@ impl Machine {
                                 self.machine_st.mode = MachineMode::Read;
                             }
                             (HeapCellValueTag::AttrVar | HeapCellValueTag::Var | HeapCellValueTag::StackVar) => {
-                                let h = self.machine_st.heap.len();
+                                let h = self.machine_st.heap.cell_len();
 
-                                self.machine_st.heap.push(list_loc_as_cell!(h+1));
+                                push_cell!(self.machine_st, list_loc_as_cell!(h+1));
                                 self.machine_st.bind(store_v.as_var().unwrap(), heap_loc_as_cell!(h));
 
                                 self.machine_st.mode = MachineMode::Write;
@@ -2748,29 +2801,61 @@ impl Machine {
 
                         self.machine_st.p += 1;
                     }
-                    &Instruction::GetPartialString(_, string, reg, has_tail) => {
+                    &Instruction::GetPartialString(_, ref string, reg) => {
+                        use crate::machine::partial_string::{HeapPStrIter, PStrCmpResult};
+
                         let deref_v = self.machine_st.deref(self.machine_st[reg]);
                         let store_v = self.machine_st.store(deref_v);
 
                         read_heap_cell!(store_v,
                             (HeapCellValueTag::Str |
                              HeapCellValueTag::Lis |
-                             HeapCellValueTag::PStrLoc |
-                             HeapCellValueTag::CStr) => {
-                                self.machine_st.match_partial_string(store_v, string, has_tail);
+                             HeapCellValueTag::PStrLoc) => {
+                                debug_assert!(store_v.is_ref());
+
+                                self.machine_st.heap[0] = store_v;
+                                let heap_pstr_iter = HeapPStrIter::new(&self.machine_st.heap, 0);
+
+                                match heap_pstr_iter.compare_pstr_to_string(string) {
+                                    Some(PStrCmpResult::CompletePStrMatch { chars_matched, pstr_loc }) => {
+                                        self.machine_st.s_offset = chars_matched;
+                                        self.machine_st.s = HeapPtr::PStr(pstr_loc);
+                                        self.machine_st.mode = MachineMode::Read;
+                                    }
+                                    Some(PStrCmpResult::PartialPStrMatch { string, var_loc }) => {
+                                        let cell = backtrack_on_resource_error!(
+                                            self.machine_st,
+                                            self.machine_st.allocate_pstr(string)
+                                        );
+
+                                        self.machine_st.mode = MachineMode::Write;
+                                        unify!(self.machine_st, cell, heap_loc_as_cell!(var_loc));
+                                    }
+                                    Some(PStrCmpResult::ListMatch { list_loc }) => {
+                                        self.machine_st.s_offset = 0;
+                                        self.machine_st.s = HeapPtr::HeapCell(list_loc);
+                                        self.machine_st.mode = MachineMode::Read;
+                                    }
+                                    None => {
+                                        self.machine_st.backtrack();
+                                        continue;
+                                    }
+                                }
                             }
                             (HeapCellValueTag::AttrVar |
                              HeapCellValueTag::StackVar |
                              HeapCellValueTag::Var) => {
-                                let target_cell = self.machine_st.push_str_to_heap(
-                                    &string.as_str(),
-                                    has_tail,
+                                let target_cell = backtrack_on_resource_error!(
+                                    self.machine_st,
+                                    self.machine_st.allocate_pstr(string)
                                 );
 
                                 self.machine_st.bind(
                                     store_v.as_var().unwrap(),
                                     target_cell,
                                 );
+
+                                self.machine_st.mode = MachineMode::Write;
                             }
                             _ => {
                                 self.machine_st.backtrack();
@@ -2803,10 +2888,10 @@ impl Machine {
                                 );
                             }
                             (HeapCellValueTag::AttrVar | HeapCellValueTag::Var | HeapCellValueTag::StackVar) => {
-                                let h = self.machine_st.heap.len();
+                                let h = self.machine_st.heap.cell_len();
 
-                                self.machine_st.heap.push(str_loc_as_cell!(h+1));
-                                self.machine_st.heap.push(atom_as_cell!(name, arity));
+                                push_cell!(self.machine_st, str_loc_as_cell!(h+1));
+                                push_cell!(self.machine_st, atom_as_cell!(name, arity));
 
                                 self.machine_st.bind(store_v.as_var().unwrap(), heap_loc_as_cell!(h));
                                 self.machine_st.mode = MachineMode::Write;
@@ -2840,8 +2925,7 @@ impl Machine {
                         match self.machine_st.mode {
                             MachineMode::Read => {
                                 let addr = self.machine_st.read_s();
-
-                                self.machine_st.write_literal_to_var(addr, v);
+                                unify!(&mut self.machine_st, addr, v);
 
                                 if self.machine_st.fail {
                                     self.machine_st.backtrack();
@@ -2851,7 +2935,7 @@ impl Machine {
                                 }
                             }
                             MachineMode::Write => {
-                                self.machine_st.heap.push(v);
+                                push_cell!(self.machine_st, v);
                             }
                         }
 
@@ -2876,17 +2960,17 @@ impl Machine {
                                 let value = self
                                     .machine_st
                                     .store(self.machine_st.deref(self.machine_st[reg]));
-                                let h = self.machine_st.heap.len();
+                                let h = self.machine_st.heap.cell_len();
 
                                 read_heap_cell!(value,
                                     (HeapCellValueTag::Var | HeapCellValueTag::AttrVar, hc) => {
                                         let value = self.machine_st.heap[hc];
 
-                                        self.machine_st.heap.push(value);
+                                        push_cell!(self.machine_st, value);
                                         self.machine_st.s_offset += 1;
                                     }
                                     _ => {
-                                        self.machine_st.heap.push(heap_loc_as_cell!(h));
+                                        push_cell!(self.machine_st, heap_loc_as_cell!(h));
                                         (self.machine_st.bind_fn)(
                                             &mut self.machine_st,
                                             Ref::heap_cell(h),
@@ -2902,13 +2986,14 @@ impl Machine {
                     &Instruction::UnifyVariable(reg) => {
                         match self.machine_st.mode {
                             MachineMode::Read => {
-                                self.machine_st[reg] = self.machine_st.read_s();
+                                let value = self.machine_st.read_s();
+                                self.machine_st[reg] = value;
                                 self.machine_st.s_offset += 1;
                             }
                             MachineMode::Write => {
-                                let h = self.machine_st.heap.len();
+                                let h = self.machine_st.heap.cell_len();
 
-                                self.machine_st.heap.push(heap_loc_as_cell!(h));
+                                push_cell!(self.machine_st, heap_loc_as_cell!(h));
                                 self.machine_st[reg] = heap_loc_as_cell!(h);
                             }
                         }
@@ -2931,8 +3016,8 @@ impl Machine {
                                 }
                             }
                             MachineMode::Write => {
-                                let h = self.machine_st.heap.len();
-                                self.machine_st.heap.push(heap_loc_as_cell!(h));
+                                let h = self.machine_st.heap.cell_len();
+                                push_cell!(self.machine_st, heap_loc_as_cell!(h));
 
                                 let addr = self.machine_st.store(self.machine_st[reg]);
                                 (self.machine_st.bind_fn)(
@@ -2944,7 +3029,7 @@ impl Machine {
                                 // the former code of this match arm was:
 
                                 // let addr = self.machine_st.store(self.machine_st[reg]);
-                                // self.machine_st.heap.push(HeapCellValue::Addr(addr));
+                                // push_cell!(self.machine_st, HeapCellValue::Addr(addr));
 
                                 // the old code didn't perform the occurs
                                 // check when enabled and so it was changed to
@@ -2958,13 +3043,16 @@ impl Machine {
                     &Instruction::UnifyVoid(n) => {
                         match self.machine_st.mode {
                             MachineMode::Read => {
+                                // TODO: this won't work when reading
+                                // characters. they're not all
+                                // necessarily uniform.
                                 self.machine_st.s_offset += n;
                             }
                             MachineMode::Write => {
-                                let h = self.machine_st.heap.len();
+                                let h = self.machine_st.heap.cell_len();
 
                                 for i in h..h + n {
-                                    self.machine_st.heap.push(heap_loc_as_cell!(i));
+                                    push_cell!(self.machine_st, heap_loc_as_cell!(i));
                                 }
                             }
                         }
@@ -3096,38 +3184,26 @@ impl Machine {
                             }
                         }
                     }
-                    &Instruction::PutConstant(_, c, reg) => {
-                        self.machine_st[reg] = c;
+                    &Instruction::PutConstant(_, cell, reg) => {
+                        self.machine_st[reg] = cell;
                         self.machine_st.p += 1;
                     }
                     &Instruction::PutList(_, reg) => {
-                        self.machine_st[reg] = list_loc_as_cell!(self.machine_st.heap.len());
+                        self.machine_st[reg] = list_loc_as_cell!(self.machine_st.heap.cell_len());
                         self.machine_st.p += 1;
                     }
-                    &Instruction::PutPartialString(_, string, reg, has_tail) => {
-                        let pstr_addr = if has_tail {
-                            if string != atom!("") {
-                                let h = self.machine_st.heap.len();
-                                self.machine_st.heap.push(string_as_pstr_cell!(string));
+                    &Instruction::PutPartialString(_, ref string, reg) => {
+                        self.machine_st[reg] = backtrack_on_resource_error!(
+                            self.machine_st,
+                            self.machine_st.allocate_pstr(&string)
+                        );
 
-                                // the tail will be pushed by the next
-                                // instruction, so don't push one here.
-
-                                pstr_loc_as_cell!(h)
-                            } else {
-                                empty_list_as_cell!()
-                            }
-                        } else {
-                            string_as_cstr_cell!(string)
-                        };
-
-                        self.machine_st[reg] = pstr_addr;
                         self.machine_st.p += 1;
                     }
                     &Instruction::PutStructure(name, arity, reg) => {
-                        let h = self.machine_st.heap.len();
+                        let h = self.machine_st.heap.cell_len();
 
-                        self.machine_st.heap.push(atom_as_cell!(name, arity));
+                        push_cell!(self.machine_st, atom_as_cell!(name, arity));
                         self.machine_st[reg] = str_loc_as_cell!(h);
 
                         self.machine_st.p += 1;
@@ -3141,9 +3217,9 @@ impl Machine {
                         if addr.is_protected(self.machine_st.e) {
                             self.machine_st.registers[arg] = addr;
                         } else {
-                            let h = self.machine_st.heap.len();
+                            let h = self.machine_st.heap.cell_len();
 
-                            self.machine_st.heap.push(heap_loc_as_cell!(h));
+                            push_cell!(self.machine_st, heap_loc_as_cell!(h));
                             (self.machine_st.bind_fn)(
                                 &mut self.machine_st,
                                 Ref::heap_cell(h),
@@ -3167,8 +3243,8 @@ impl Machine {
                                 self.machine_st.registers[arg] = self.machine_st[norm];
                             }
                             RegType::Temp(_) => {
-                                let h = self.machine_st.heap.len();
-                                self.machine_st.heap.push(heap_loc_as_cell!(h));
+                                let h = self.machine_st.heap.cell_len();
+                                push_cell!(self.machine_st, heap_loc_as_cell!(h));
 
                                 self.machine_st[norm] = heap_loc_as_cell!(h);
                                 self.machine_st.registers[arg] = heap_loc_as_cell!(h);
@@ -3178,7 +3254,7 @@ impl Machine {
                         self.machine_st.p += 1;
                     }
                     &Instruction::SetConstant(c) => {
-                        self.machine_st.heap.push(c);
+                        push_cell!(self.machine_st, c);
                         self.machine_st.p += 1;
                     }
                     &Instruction::SetLocalValue(reg) => {
@@ -3186,37 +3262,37 @@ impl Machine {
                         let stored_v = self.machine_st.store(addr);
 
                         if stored_v.is_stack_var() {
-                            let h = self.machine_st.heap.len();
-                            self.machine_st.heap.push(heap_loc_as_cell!(h));
+                            let h = self.machine_st.heap.cell_len();
+                            push_cell!(self.machine_st, heap_loc_as_cell!(h));
                             (self.machine_st.bind_fn)(
                                 &mut self.machine_st,
                                 Ref::heap_cell(h),
                                 stored_v,
                             );
                         } else {
-                            self.machine_st.heap.push(stored_v);
+                            push_cell!(self.machine_st, stored_v);
                         }
 
                         self.machine_st.p += 1;
                     }
                     &Instruction::SetVariable(reg) => {
-                        let h = self.machine_st.heap.len();
+                        let h = self.machine_st.heap.cell_len();
 
-                        self.machine_st.heap.push(heap_loc_as_cell!(h));
+                        push_cell!(self.machine_st, heap_loc_as_cell!(h));
                         self.machine_st[reg] = heap_loc_as_cell!(h);
 
                         self.machine_st.p += 1;
                     }
                     &Instruction::SetValue(reg) => {
                         let heap_val = self.machine_st.store(self.machine_st[reg]);
-                        self.machine_st.heap.push(heap_val);
+                        push_cell!(self.machine_st, heap_val);
                         self.machine_st.p += 1;
                     }
                     &Instruction::SetVoid(n) => {
-                        let h = self.machine_st.heap.len();
+                        let h = self.machine_st.heap.cell_len();
 
                         for i in h..h + n {
-                            self.machine_st.heap.push(heap_loc_as_cell!(i));
+                            push_cell!(self.machine_st, heap_loc_as_cell!(i));
                         }
 
                         self.machine_st.p += 1;
@@ -3333,11 +3409,11 @@ impl Machine {
                     }
                     &Instruction::CallCopyToLiftedHeap => {
                         self.copy_to_lifted_heap();
-                        self.machine_st.p += 1;
+                        step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::ExecuteCopyToLiftedHeap => {
                         self.copy_to_lifted_heap();
-                        self.machine_st.p = self.machine_st.cp;
+                        step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallCreatePartialString => {
                         self.create_partial_string();
@@ -4253,11 +4329,11 @@ impl Machine {
                     }
                     &Instruction::CallSetBall => {
                         self.set_ball();
-                        self.machine_st.p += 1;
+                        step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::ExecuteSetBall => {
                         self.set_ball();
-                        self.machine_st.p = self.machine_st.cp;
+                        step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallPushBallStack => {
                         self.push_ball_stack();
@@ -4592,19 +4668,19 @@ impl Machine {
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallLoadHTML => {
-                        self.load_html();
+                        backtrack_on_resource_error!(self.machine_st, self.load_html());
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::ExecuteLoadHTML => {
-                        self.load_html();
+                        backtrack_on_resource_error!(self.machine_st, self.load_html());
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallLoadXML => {
-                        self.load_xml();
+                        backtrack_on_resource_error!(self.machine_st, self.load_xml());
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::ExecuteLoadXML => {
-                        self.load_xml();
+                        backtrack_on_resource_error!(self.machine_st, self.load_xml());
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallGetEnv => {
@@ -5081,13 +5157,18 @@ impl Machine {
                         let r = self.machine_st.registers[2];
                         let r = self.machine_st.store(self.machine_st.deref(r));
 
-                        let h = self.machine_st.heap.len();
-                        self.machine_st
-                            .heap
-                            .extend(functor!(atom!("-"), [fixnum(n), fixnum(p)]));
+                        let mut writer = Heap::functor_writer(
+                            functor!(atom!("-"), [fixnum(n), fixnum(p)]),
+                        );
+
+                        let str_cell = backtrack_on_resource_error!(
+                            &mut self.machine_st,
+                            writer(&mut self.machine_st.heap)
+                        );
 
                         let r = r.as_var().unwrap();
-                        self.machine_st.bind(r, str_loc_as_cell!(h));
+
+                        self.machine_st.bind(r, str_cell);
 
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
@@ -5099,13 +5180,18 @@ impl Machine {
                         let r = self.machine_st.registers[2];
                         let r = self.machine_st.store(self.machine_st.deref(r));
 
-                        let h = self.machine_st.heap.len();
-                        self.machine_st
-                            .heap
-                            .extend(functor!(atom!("-"), [fixnum(n), fixnum(p)]));
+                        let mut writer = Heap::functor_writer(
+                            functor!(atom!("-"), [fixnum(n), fixnum(p)]),
+                        );
+
+                        let str_cell = backtrack_on_resource_error!(
+                            &mut self.machine_st,
+                            writer(&mut self.machine_st.heap)
+                        );
 
                         let r = r.as_var().unwrap();
-                        self.machine_st.bind(r, str_loc_as_cell!(h));
+
+                        self.machine_st.bind(r, str_cell);
 
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }

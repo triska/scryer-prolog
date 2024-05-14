@@ -1,11 +1,13 @@
 use lexical::{FromLexicalLossy, parse_lossy};
 
-use crate::arena::ArenaAllocated;
+use crate::arena::*;
 use crate::atom_table::*;
+use crate::machine::heap::*;
 pub use crate::machine::machine_state::*;
 use crate::parser::ast::*;
 use crate::parser::char_reader::*;
 use crate::parser::dashu::Integer;
+use crate::types::*;
 
 use std::convert::TryFrom;
 use std::fmt;
@@ -31,8 +33,9 @@ struct LayoutInfo {
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
-    Literal(Literal),
+    Literal(HeapCellValue),
     Var(String),
+    String(String),
     Open,              // '('
     OpenCT,            // '('
     Close,             // ')'
@@ -46,22 +49,46 @@ pub enum Token {
 }
 
 impl Token {
+    pub(super) fn byte_size(&self, flags: MachineFlags) -> usize {
+        match self {
+            Token::String(string) if flags.double_quotes.is_codes() => {
+                2 * string.chars().count() + 1
+            }
+            Token::String(string) => {
+                Heap::compute_pstr_size(&string)
+            }
+            Token::Literal(_) |
+            Token::Comma |
+            Token::HeadTailSeparator |
+            Token::Open |
+            Token::OpenCT |
+            Token::OpenCurly |
+            Token::OpenList |
+            Token::Var(_) => {
+                heap_index!(1)
+            }
+            _ => {
+                0
+            }
+        }
+    }
+
     #[inline]
     pub(super) fn is_end(&self) -> bool {
         matches!(self, Token::End)
     }
 }
 
-pub struct Lexer<'a, R> {
+pub struct LexerParser<'a, R> {
     pub(crate) reader: R,
     pub(crate) machine_st: &'a mut MachineState,
     pub(crate) line_num: usize,
     pub(crate) col_num: usize,
 }
 
-impl<'a, R: fmt::Debug> fmt::Debug for Lexer<'a, R> {
+impl<'a, R: fmt::Debug> fmt::Debug for LexerParser<'a, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Lexer")
+        f.debug_struct("LexerParser")
             .field("reader", &"&'a mut R") // Hacky solution.
             .field("line_num", &self.line_num)
             .field("col_num", &self.col_num)
@@ -69,9 +96,9 @@ impl<'a, R: fmt::Debug> fmt::Debug for Lexer<'a, R> {
     }
 }
 
-impl<'a, R: CharRead> Lexer<'a, R> {
+impl<'a, R: CharRead> LexerParser<'a, R> {
     pub fn new(src: R, machine_st: &'a mut MachineState) -> Self {
-        Lexer {
+        LexerParser {
             reader: src,
             machine_st,
             line_num: 0,
@@ -91,11 +118,6 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             Some(Ok(c)) => Ok(c),
             _ => Err(ParserError::unexpected_eof(self.loc_to_err_src())),
         }
-    }
-
-    #[inline]
-    pub fn loc_to_err_src(&self) -> ParserErrorSrc {
-        ParserErrorSrc { line_num: self.line_num, col_num: self.col_num }
     }
 
     #[inline(always)]
@@ -460,14 +482,16 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             }
 
             i64::from_str_radix(&token, 16)
-                .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                 .or_else(|_| {
                     Integer::from_str_radix(&token, 16)
                         .map(|n| {
-                            Token::Literal(Literal::Integer(arena_alloc!(
-                                n,
-                                &mut self.machine_st.arena
-                            )))
+                            Token::Literal(typed_arena_ptr_as_cell!(
+                                arena_alloc!(
+                                    n,
+                                    &mut self.machine_st.arena
+                                )
+                            ))
                         })
                         .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
@@ -495,14 +519,16 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             }
 
             i64::from_str_radix(&token, 8)
-                .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                 .or_else(|_| {
                     Integer::from_str_radix(&token, 8)
                         .map(|n| {
-                            Token::Literal(Literal::Integer(arena_alloc!(
-                                n,
-                                &mut self.machine_st.arena
-                            )))
+                            Token::Literal(typed_arena_ptr_as_cell!(
+                                arena_alloc!(
+                                    n,
+                                    &mut self.machine_st.arena
+                                )
+                            ))
                         })
                         .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
@@ -530,11 +556,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             }
 
             i64::from_str_radix(&token, 2)
-                .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                 .or_else(|_| {
                     Integer::from_str_radix(&token, 2)
                         .map(|n| {
-                            Token::Literal(Literal::Integer(arena_alloc!(
+                            Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                 n,
                                 &mut self.machine_st.arena
                             )))
@@ -610,7 +636,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
                 if !token.is_empty() && token.chars().nth(1).is_none() {
                     if let Some(c) = token.chars().next() {
-                        return Ok(Token::Literal(Literal::Char(c)));
+                        return Ok(Token::Literal(char_as_cell!(c)));
                     }
                 }
             } else {
@@ -624,16 +650,16 @@ impl<'a, R: CharRead> Lexer<'a, R> {
         }
 
         if token.as_str() == "[]" {
-            Ok(Token::Literal(Literal::Atom(atom!("[]"))))
+            Ok(Token::Literal(empty_list_as_cell!()))
         } else {
-            Ok(Token::Literal(Literal::Atom(AtomTable::build_with(
+            Ok(Token::Literal(atom_as_cell!(AtomTable::build_with(
                 &self.machine_st.atom_tbl,
                 &token,
             ))))
         }
     }
 
-    fn parse_lossy_wrapper<T: FromLexicalLossy>(&self, token: String) -> Result<T, ParserError> {
+    fn parse_lossy_wrapper<T: FromLexicalLossy>(&self, token: &str) -> Result<T, ParserError> {
         match parse_lossy::<T, _>(token.as_bytes()) {
             Ok(n) => Ok(n),
             Err(e) => return Err(ParserError::LexicalError(e, self.loc_to_err_src())),
@@ -642,8 +668,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
     fn vacate_with_float(&mut self, mut token: String) -> Result<Token, ParserError> {
         self.return_char(token.pop().unwrap());
-        let n = self.parse_lossy_wrapper::<f64>(token)?;
-        Ok(Token::Literal(Literal::from(float_alloc!(n, self.machine_st.arena))))
+        let n = self.parse_lossy_wrapper::<f64>(&token)?;
+        Ok(Token::Literal(HeapCellValue::from(float_alloc!(
+            n,
+            self.machine_st.arena
+        ))))
     }
 
     fn skip_underscore_in_number(&mut self) -> Result<char, ParserError> {
@@ -685,12 +714,12 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
                 token
                     .parse::<i64>()
-                    .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                    .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                     .or_else(|_| {
                         token
                             .parse::<Integer>()
                             .map(|n| {
-                                Token::Literal(Literal::Integer(arena_alloc!(
+                                Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                     n,
                                     &mut self.machine_st.arena
                                 )))
@@ -757,9 +786,8 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                             }
                         }
 
-                        let n = self.parse_lossy_wrapper::<f64>(token)?;
-
-                        Ok(Token::Literal(Literal::from(float_alloc!(
+                        let n = self.parse_lossy_wrapper::<f64>(&token)?;
+                        Ok(Token::Literal(HeapCellValue::from(float_alloc!(
                             n,
                             self.machine_st.arena
                         ))))
@@ -767,8 +795,8 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         return self.vacate_with_float(token);
                     }
                 } else {
-                    let n = self.parse_lossy_wrapper::<f64>(token)?;
-                    Ok(Token::Literal(Literal::from(float_alloc!(
+                    let n = self.parse_lossy_wrapper::<f64>(&token)?;
+                    Ok(Token::Literal(HeapCellValue::from(float_alloc!(
                         n,
                         self.machine_st.arena
                     ))))
@@ -778,12 +806,12 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
                 token
                     .parse::<i64>()
-                    .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                    .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                     .or_else(|_| {
                         token
                             .parse::<Integer>()
                             .map(|n| {
-                                Token::Literal(Literal::Integer(arena_alloc!(
+                                Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                     n,
                                     &mut self.machine_st.arena
                                 )))
@@ -798,13 +826,13 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         token
                             .parse::<i64>()
                             .map(|n| {
-                                Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena))
+                                Token::Literal(fixnum!(n, &mut self.machine_st.arena))
                             })
                             .or_else(|_| {
                                 token
                                     .parse::<Integer>()
                                     .map(|n| {
-                                        Token::Literal(Literal::Integer(arena_alloc!(
+                                        Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                             n,
                                             &mut self.machine_st.arena
                                         )))
@@ -823,13 +851,13 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         token
                             .parse::<i64>()
                             .map(|n| {
-                                Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena))
+                                Token::Literal(fixnum!(n, &mut self.machine_st.arena))
                             })
                             .or_else(|_| {
                                 token
                                     .parse::<Integer>()
                                     .map(|n| {
-                                        Token::Literal(Literal::Integer(arena_alloc!(
+                                        Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                             n,
                                             &mut self.machine_st.arena
                                         )))
@@ -848,13 +876,13 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         token
                             .parse::<i64>()
                             .map(|n| {
-                                Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena))
+                                Token::Literal(fixnum!(n, &mut self.machine_st.arena))
                             })
                             .or_else(|_| {
                                 token
                                     .parse::<Integer>()
                                     .map(|n| {
-                                        Token::Literal(Literal::Integer(arena_alloc!(
+                                        Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                             n,
                                             &mut self.machine_st.arena
                                         )))
@@ -879,14 +907,14 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         self.skip_char(c);
                         self.return_char('\'');
 
-                        return Ok(Token::Literal(Literal::Fixnum(Fixnum::build_with(0))));
+                        return Ok(Token::Literal(fixnum_as_cell!(Fixnum::build_with(0))));
                     } else {
                         self.return_char('\\');
                     }
                 }
 
                 self.get_single_quoted_char()
-                    .map(|c| Token::Literal(Literal::Fixnum(Fixnum::build_with(c as i64))))
+                    .map(|c| Token::Literal(fixnum_as_cell!(Fixnum::build_with(c as i64))))
                     .or_else(|err| {
                         match err {
                             ParserError::UnexpectedChar('\'', ..) => {}
@@ -898,13 +926,13 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         token
                             .parse::<i64>()
                             .map(|n| {
-                                Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena))
+                                Token::Literal(fixnum!(n, &mut self.machine_st.arena))
                             })
                             .or_else(|_| {
                                 token
                                     .parse::<Integer>()
                                     .map(|n| {
-                                        Token::Literal(Literal::Integer(arena_alloc!(
+                                        Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                             n,
                                             &mut self.machine_st.arena
                                         )))
@@ -917,12 +945,12 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             } else {
                 token
                     .parse::<i64>()
-                    .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                    .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                     .or_else(|_| {
                         token
                             .parse::<Integer>()
                             .map(|n| {
-                                Token::Literal(Literal::Integer(arena_alloc!(
+                                Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                     n,
                                     &mut self.machine_st.arena
                                 )))
@@ -933,12 +961,12 @@ impl<'a, R: CharRead> Lexer<'a, R> {
         } else {
             token
                 .parse::<i64>()
-                .map(|n| Token::Literal(fixnum!(Literal, n, &mut self.machine_st.arena)))
+                .map(|n| Token::Literal(fixnum!(n, &mut self.machine_st.arena)))
                 .or_else(|_| {
                     token
                         .parse::<Integer>()
                         .map(|n| {
-                            Token::Literal(Literal::Integer(arena_alloc!(
+                            Token::Literal(typed_arena_ptr_as_cell!(arena_alloc!(
                                 n,
                                 &mut self.machine_st.arena
                             )))
@@ -1085,12 +1113,12 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
                 if c == '"' {
                     let s = self.char_code_list_token(c)?;
-                    let atom = AtomTable::build_with(&self.machine_st.atom_tbl, &s);
 
                     return if let DoubleQuotes::Atom = self.machine_st.flags.double_quotes {
-                        Ok(Token::Literal(Literal::Atom(atom)))
+                        let atom = AtomTable::build_with(&self.machine_st.atom_tbl, &s);
+                        Ok(Token::Literal(atom_as_cell!(atom)))
                     } else {
-                        Ok(Token::Literal(Literal::String(atom)))
+                        Ok(Token::String(s))
                     };
                 }
 

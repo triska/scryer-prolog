@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-use crate::atom_table;
+use crate::atom_table::*;
 use crate::heap_print::{HCPrinter, HCValueOutputter, PrinterOutputter};
 use crate::machine::mock_wam::CompositeOpDir;
-use crate::machine::{copy_and_align_iter, BREAK_FROM_DISPATCH_LOOP_LOC, LIB_QUERY_SUCCESS};
-use crate::parser::parser::{Parser, Tokens};
+use crate::machine::{BREAK_FROM_DISPATCH_LOOP_LOC, LIB_QUERY_SUCCESS};
+use crate::parser::lexer::*;
+use crate::parser::parser::Tokens;
+
 use indexmap::IndexMap;
 
 use super::{
-    streams::Stream, Atom, AtomCell, HeapCellValue, HeapCellValueTag, Machine, MachineConfig,
+    streams::Stream, Atom, HeapCellValue, HeapCellValueTag, Machine, MachineConfig,
     QueryResolution, QueryResolutionLine, QueryResult, Value,
 };
 
@@ -26,7 +27,7 @@ impl Machine {
     pub fn consult_module_string(&mut self, module_name: &str, program: String) {
         let stream = Stream::from_owned_string(program, &mut self.machine_st.arena);
         self.machine_st.registers[1] = stream_as_cell!(stream);
-        self.machine_st.registers[2] = atom_as_cell!(&atom_table::AtomTable::build_with(
+        self.machine_st.registers[2] = atom_as_cell!(AtomTable::build_with(
             &self.machine_st.atom_tbl,
             module_name
         ));
@@ -54,34 +55,28 @@ impl Machine {
         or_frame.prelude.attr_var_queue_len = 0;
 
         self.machine_st.b = stub_b;
-        self.machine_st.hb = self.machine_st.heap.len();
+        self.machine_st.hb = self.machine_st.heap.cell_len();
         self.machine_st.block = stub_b;
     }
 
     pub fn run_query(&mut self, query: String) -> QueryResult {
         // println!("Query: {}", query);
         // Parse the query so we can analyze and then call the term
-        let mut parser = Parser::new(
+        let mut lexer_parser = LexerParser::new(
             Stream::from_owned_string(query, &mut self.machine_st.arena),
             &mut self.machine_st,
         );
+
+        // Write parsed term to heap
         let op_dir = CompositeOpDir::new(&self.indices.op_dir, None);
-        let term = parser
+        let term = lexer_parser
             .read_term(&op_dir, Tokens::Default)
             .expect("Failed to parse query");
 
         self.allocate_stub_choice_point();
 
-        // Write parsed term to heap
-        let heap_loc = self.machine_st.heap.len();
-        self.machine_st.heap.extend(copy_and_align_iter(
-            term.heap.iter().cloned(),
-            0,
-            heap_loc as i64,
-        ));
-
         // Write term to heap
-        self.machine_st.registers[1] = self.machine_st.heap[heap_loc + term.focus];
+        self.machine_st.registers[1] = self.machine_st.heap[term.focus];
 
         self.machine_st.cp = LIB_QUERY_SUCCESS; // BREAK_FROM_DISPATCH_LOOP_LOC;
         let call_index_p = self
@@ -96,8 +91,8 @@ impl Machine {
             .inverse_var_locs
             .iter()
             .map(|(var_loc, var)| {
-                let cell = term.heap[*var_loc];
-                (cell + heap_loc, var.clone())
+                let cell = self.machine_st.heap[*var_loc];
+                (cell, var.clone())
             })
             .collect();
 
@@ -165,10 +160,9 @@ impl Machine {
                     continue;
                 }
 
-                let var_loc = var_loc + heap_loc;
+                let var_loc = *var_loc; // + heap_loc;
                 let mut printer = HCPrinter::new(
                     &mut self.machine_st.heap,
-                    Arc::clone(&self.machine_st.atom_tbl),
                     &mut self.machine_st.stack,
                     &self.indices.op_dir,
                     PrinterOutputter::new(),

@@ -583,7 +583,10 @@ impl Machine {
     #[inline(always)]
     pub(crate) fn run_verify_attr_interrupt(&mut self, arity: usize) {
         let p = self.machine_st.attr_var_init.verify_attrs_loc;
-        self.machine_st.verify_attr_interrupt(p, arity);
+        step_or_resource_error!(
+            self.machine_st,
+            self.machine_st.verify_attr_interrupt(p, arity)
+        );
     }
 
     fn next_clause_applicable(&mut self, mut offset: usize) -> bool {
@@ -603,12 +606,11 @@ impl Machine {
                                 s,
                             )) => {
                                 cell = self.deref_register(arg);
-                                self.machine_st
-                                    .select_switch_on_term_index(cell, v, c, l, s)
+                                self.machine_st.select_switch_on_term_index(cell, v, c, l, s)
                             }
                             IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(hm)) => {
-                                let lit = self.machine_st.constant_to_literal(cell);
-                                hm.get(&lit).cloned().unwrap_or(IndexingCodePtr::Fail)
+                                // let lit = self.machine_st.constant_to_literal(cell);
+                                hm.get(&cell).cloned().unwrap_or(IndexingCodePtr::Fail)
                             }
                             IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(hm)) => {
                                 self.machine_st.select_switch_on_structure_index(cell, hm)
@@ -634,6 +636,7 @@ impl Machine {
 
                     if cell.is_var() {
                         offset += 1;
+                    /*
                     } else if lit.get_tag() == HeapCellValueTag::CStr {
                         read_heap_cell!(cell,
                             (HeapCellValueTag::CStr) => {
@@ -660,8 +663,10 @@ impl Machine {
                                 return false;
                             }
                         );
+                    */
                     } else {
-                        self.machine_st.write_literal_to_var(cell, lit);
+                        unify!(self.machine_st, cell, lit);
+                        // self.machine_st.write_literal_to_var(cell, lit);
 
                         if self.machine_st.fail {
                             self.machine_st.fail = false;
@@ -675,7 +680,7 @@ impl Machine {
                     let cell = self.deref_register(t);
 
                     read_heap_cell!(cell,
-                        (HeapCellValueTag::Lis | HeapCellValueTag::PStrLoc | HeapCellValueTag::CStr) => {
+                        (HeapCellValueTag::Lis | HeapCellValueTag::PStrLoc) => {// | HeapCellValueTag::CStr) => {
                             offset += 1;
                         }
                         (HeapCellValueTag::Str, s) => {
@@ -716,13 +721,14 @@ impl Machine {
                 }
                 &Instruction::GetPartialString(
                     Level::Shallow,
-                    string,
+                    ref _string,
                     RegType::Temp(t),
-                    has_tail,
+                    // has_tail,
                 ) => {
                     let cell = self.deref_register(t);
 
                     read_heap_cell!(cell,
+                        /*
                         (HeapCellValueTag::CStr, cstr) => {
                             if !has_tail && string != cstr {
                                 return false;
@@ -730,11 +736,13 @@ impl Machine {
 
                             offset += 1;
                         }
+                        */
                         (HeapCellValueTag::Lis | HeapCellValueTag::PStrLoc) => {
                             offset += 1;
                         }
                         (HeapCellValueTag::Str, s) => {
-                            let (name, arity) = cell_as_atom_cell!(self.machine_st.heap[s]).get_name_and_arity();
+                            let (name, arity) = cell_as_atom_cell!(self.machine_st.heap[s])
+                                .get_name_and_arity();
 
                             if name == atom!(".") && arity == 2 {
                                 offset += 1;
@@ -857,7 +865,7 @@ impl Machine {
             or_frame.prelude.boip = 0;
             or_frame.prelude.biip = 0;
             or_frame.prelude.tr = self.machine_st.tr;
-            or_frame.prelude.h = self.machine_st.heap.len();
+            or_frame.prelude.h = self.machine_st.heap.cell_len();
             or_frame.prelude.b0 = self.machine_st.b0;
             or_frame.prelude.attr_var_queue_len =
                 self.machine_st.attr_var_init.attr_var_queue.len();
@@ -868,7 +876,7 @@ impl Machine {
                 or_frame[i] = self.machine_st.registers[i + 1];
             }
 
-            self.machine_st.hb = self.machine_st.heap.len();
+            self.machine_st.hb = self.machine_st.heap.cell_len();
         }
 
         self.machine_st.p += 1;
@@ -889,7 +897,7 @@ impl Machine {
             or_frame.prelude.boip = self.machine_st.oip;
             or_frame.prelude.biip = self.machine_st.iip + iip_offset; // 1
             or_frame.prelude.tr = self.machine_st.tr;
-            or_frame.prelude.h = self.machine_st.heap.len();
+            or_frame.prelude.h = self.machine_st.heap.cell_len();
             or_frame.prelude.b0 = self.machine_st.b0;
             or_frame.prelude.attr_var_queue_len =
                 self.machine_st.attr_var_init.attr_var_queue.len();
@@ -900,7 +908,7 @@ impl Machine {
                 or_frame[i] = self.machine_st.registers[i + 1];
             }
 
-            self.machine_st.hb = self.machine_st.heap.len();
+            self.machine_st.hb = self.machine_st.heap.cell_len();
 
             // self.machine_st.oip = 0;
             // self.machine_st.iip = 0;

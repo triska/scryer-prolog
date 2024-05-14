@@ -15,18 +15,132 @@ use std::sync::Mutex;
 use std::sync::RwLock;
 use std::sync::Weak;
 
+use fxhash::FxBuildHasher;
 use indexmap::IndexSet;
 
 use scryer_modular_bitfield::prelude::*;
+
+#[bitfield]
+#[repr(u64)]
+#[derive(Copy, Clone, Debug)]
+pub struct AtomCell {
+    name: B48,
+    arity: B8,
+    #[allow(unused)]
+    f: bool,
+    #[allow(unused)]
+    m: bool,
+    #[allow(unused)]
+    is_inlined: bool,
+    #[allow(unused)]
+    tag: B5,
+}
+
+/*
+impl PartialEq<Atom> for Atom {
+    fn eq(&self, other: &Self) -> bool {
+        let l = self.with_f(false).with_m(false);
+        let r = other.with_f(false).with_m(false);
+
+        l.as_u64() == r.as_u64()
+    }
+}
+*/
+
+const INLINED_ATOM_MAX_LEN: usize = 6;
+
+const_assert!(INLINED_ATOM_MAX_LEN < mem::size_of::<AtomCell>());
+const_assert!(mem::size_of::<AtomCell>() == 8);
+
+const_assert!(INLINED_ATOM_MAX_LEN < mem::size_of::<Atom>());
+const_assert!(mem::size_of::<Atom>() == 8);
+
+impl AtomCell {
+    #[inline]
+    pub fn new_static(index: u64) -> Self {
+        // upper 23 bits of index must be 0
+        debug_assert!(index & !((1 << 49) - 1) == 0);
+        AtomCell::new()
+            .with_name(index)
+            .with_arity(0u8)
+            .with_m(false)
+            .with_f(false)
+            .with_is_inlined(false)
+            .with_tag(HeapCellValueTag::Atom as u8)
+    }
+
+    #[inline]
+    pub fn new_inlined(string: &str, arity: u8) -> Self {
+        debug_assert!(string.len() <= INLINED_ATOM_MAX_LEN);
+
+        let mut string_buf: [u8; 8] = [0u8; 8];
+        string_buf[.. string.len()].copy_from_slice(string.as_bytes());
+        let encoding = u64::from_le_bytes(string_buf);
+
+        AtomCell::new()
+            .with_name(encoding)
+            .with_arity(arity)
+            .with_m(false)
+            .with_f(false)
+            .with_is_inlined(true)
+            .with_tag(HeapCellValueTag::Atom as u8)
+    }
+
+    #[inline]
+    pub fn new_char_inlined(c: char) -> Self {
+        let mut char_buf = [0u8;8];
+        c.encode_utf8(&mut char_buf);
+
+        let encoding = u64::from_le_bytes(char_buf);
+
+        AtomCell::new()
+            .with_name(encoding)
+            .with_arity(0u8)
+            .with_m(false)
+            .with_f(false)
+            .with_is_inlined(true)
+            .with_tag(HeapCellValueTag::Atom as u8)
+    }
+
+    #[inline]
+    pub fn build_with(atom_index: u64, arity: u8) -> Self {
+        debug_assert!((arity as usize) <= MAX_ARITY);
+
+        AtomCell::new()
+            .with_name(atom_index >> 1)
+            .with_arity(arity)
+            .with_f(false)
+            .with_m(false)
+            .with_is_inlined(atom_index & 1 == 1)
+            .with_tag(HeapCellValueTag::Atom as u8)
+    }
+
+    #[inline]
+    pub fn get_name(self) -> Atom {
+        Atom { index: (self.name() << 1) | self.is_inlined() as u64 }
+    }
+
+    #[inline]
+    pub fn get_arity(self) -> usize {
+        self.arity() as usize
+    }
+
+    #[inline]
+    pub fn get_name_and_arity(self) -> (Atom, usize) {
+        (self.get_name(), self.get_arity())
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Atom {
     pub index: u64,
 }
 
-const_assert!(mem::size_of::<Atom>() == 8);
-
 include!(concat!(env!("OUT_DIR"), "/static_atoms.rs"));
+
+// populate these in STRINGS so they can be used from build_functor
+const _: Atom = atom!(".");
+const _: Atom = atom!("[]");
 
 impl<'a> From<&'a Atom> for Atom {
     #[inline]
@@ -35,6 +149,7 @@ impl<'a> From<&'a Atom> for Atom {
     }
 }
 
+/*
 impl From<bool> for Atom {
     #[inline]
     fn from(value: bool) -> Self {
@@ -45,6 +160,7 @@ impl From<bool> for Atom {
         }
     }
 }
+*/
 
 impl indexmap::Equivalent<Atom> for str {
     fn equivalent(&self, key: &Atom) -> bool {
@@ -122,9 +238,23 @@ macro_rules! is_char {
 
 pub enum AtomString<'a> {
     Static(&'a str),
+    Inlined([u8;8]),
     Dynamic(AtomTableRef<str>),
 }
 
+fn inlined_to_str<'a>(bytes: &'a [u8;8]) -> &'a str {
+    let slice_len = if bytes[0] == 0 {
+        1
+    } else {
+        bytes.iter().position(|&b| b == 0u8).unwrap_or(INLINED_ATOM_MAX_LEN)
+    };
+
+    unsafe {
+        str::from_utf8_unchecked(&bytes[..slice_len])
+    }
+}
+
+/*
 impl AtomString<'_> {
     pub fn map<F>(self, f: F) -> Self
     where
@@ -136,6 +266,7 @@ impl AtomString<'_> {
         }
     }
 }
+*/
 
 impl std::fmt::Debug for AtomString<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -154,6 +285,7 @@ impl std::ops::Deref for AtomString<'_> {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Static(reference) => reference,
+            Self::Inlined(inlined) => inlined_to_str(&inlined),
             Self::Dynamic(guard) => guard.deref(),
         }
     }
@@ -171,13 +303,50 @@ impl rustyline::completion::Candidate for AtomString<'_> {
 }
 
 impl Atom {
-    #[inline(always)]
-    pub fn is_static(self) -> bool {
-        (self.index as usize) < STRINGS.len() << 3
+    #[inline]
+    fn new_uninlined(idx: u64) -> Self {
+        Atom { index: idx << 1 }
+    }
+
+    #[inline]
+    fn new_inlined(string: &str) -> Self {
+        AtomCell::new_inlined(string, 0).get_name()
     }
 
     #[inline(always)]
-    pub fn as_ptr(self) -> Option<AtomTableRef<u8>> {
+    fn is_static(self) -> bool {
+        if self.is_inlined() {
+            true
+        } else {
+            (self.flat_index() as usize) < STRINGS.len()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn flat_index(self) -> u64 {
+        self.index >> 1
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_inlined(self) -> bool {
+        self.index & 1 == 1
+    }
+
+    /*
+    #[inline]
+    pub(crate) fn as_cell(self) -> AtomCell {
+        AtomCell::new()
+            .with_name(self.flat_index())
+            .with_arity(0u16)
+            .with_f(false)
+            .with_m(false)
+            .with_is_inlined(self.is_inlined())
+            .with_tag(HeapCellValueTag::Atom as u8)
+    }
+    */
+
+    #[inline(always)]
+    fn as_ptr(self) -> Option<AtomTableRef<u8>> {
         if self.is_static() {
             None
         } else {
@@ -186,7 +355,7 @@ impl Atom {
             unsafe {
                 AtomTableRef::try_map(atom_table.buf(), |buf| {
                     (buf as *const u8)
-                        .add((self.index as usize) - (STRINGS.len() << 3))
+                        .add(self.flat_index() as usize - STRINGS.len())
                         .as_ref()
                 })
             }
@@ -200,8 +369,11 @@ impl Atom {
 
     #[inline(always)]
     pub fn len(self) -> usize {
-        if self.is_static() {
-            STRINGS[(self.index >> 3) as usize].len()
+        if let Some(s) = self.inlined_str() {
+            s.len()
+        } else if self.is_static() {
+            let index = self.flat_index();
+            STRINGS[index as usize].len()
         } else {
             let ptr = self.as_ptr().unwrap();
             let ptr = ptr.deref() as *const u8 as *const AtomHeader;
@@ -211,11 +383,6 @@ impl Atom {
 
     pub fn is_empty(self) -> bool {
         self.len() == 0
-    }
-
-    #[inline(always)]
-    pub fn flat_index(self) -> u64 {
-        self.index >> 3
     }
 
     pub fn as_char(self) -> Option<char> {
@@ -233,9 +400,21 @@ impl Atom {
     }
 
     #[inline]
+    fn inlined_str<'a>(&self) -> Option<AtomString<'a>> {
+        if self.is_inlined() {
+            Some(AtomString::Inlined(self.flat_index().to_le_bytes()))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
     pub fn as_str(&self) -> AtomString<'static> {
-        if self.is_static() {
-            AtomString::Static(STRINGS[(self.index >> 3) as usize])
+        if let Some(s) = self.inlined_str() {
+            s
+        } else if self.is_static() {
+            let index = self.flat_index() as usize;
+            AtomString::Static(STRINGS[index])
         } else if let Some(ptr) = self.as_ptr() {
             AtomString::Dynamic(AtomTableRef::map(ptr, |ptr| {
                 let header =
@@ -247,7 +426,7 @@ impl Atom {
                 unsafe { str::from_utf8_unchecked(slice::from_raw_parts(buf, len)) }
             }))
         } else {
-            AtomString::Static(STRINGS[(self.index >> 3) as usize])
+            AtomString::Static(STRINGS[(self.index >> 1) as usize])
         }
     }
 
@@ -287,7 +466,7 @@ impl Ord for Atom {
 #[derive(Debug)]
 pub struct InnerAtomTable {
     block: RawBlock<AtomTable>,
-    pub table: Rcu<IndexSet<Atom>>,
+    pub table: Rcu<IndexSet<Atom, FxBuildHasher>>,
 }
 
 #[derive(Debug)]
@@ -299,7 +478,24 @@ pub struct AtomTable {
 
 pub type AtomTableRef<M> = RcuRef<InnerAtomTable, M>;
 
+fn populate_static_strings() -> IndexSet<Atom, FxBuildHasher> {
+    let mut table = IndexSet::with_hasher(FxBuildHasher::default());
+
+    for idx in 0 .. STRINGS.len() {
+        table.insert(Atom::new_uninlined(idx as u64));
+    }
+
+    table
+}
+
 impl InnerAtomTable {
+    fn new() -> Self {
+        Self {
+            block: RawBlock::new(),
+            table: Rcu::new(populate_static_strings()),
+        }
+    }
+
     #[inline(always)]
     fn lookup_str(self: &InnerAtomTable, string: &str) -> Option<Atom> {
         STATIC_ATOMS_MAP
@@ -323,10 +519,7 @@ impl AtomTable {
                 atom_table
             } else {
                 let atom_table = Arc::new(Self {
-                    inner: Rcu::new(InnerAtomTable {
-                        block: RawBlock::new(),
-                        table: Rcu::new(IndexSet::new()),
-                    }),
+                    inner: Rcu::new(InnerAtomTable::new()),
                     update: Mutex::new(()),
                 });
                 *guard = Arc::downgrade(&atom_table);
@@ -342,11 +535,15 @@ impl AtomTable {
         })
     }
 
-    pub fn active_table(&self) -> RcuRef<IndexSet<Atom>, IndexSet<Atom>> {
+    pub fn active_table(&self) -> RcuRef<IndexSet<Atom, FxBuildHasher>, IndexSet<Atom, FxBuildHasher>> {
         self.inner.active_epoch().table.active_epoch()
     }
 
     pub fn build_with(atom_table: &AtomTable, string: &str) -> Atom {
+        if 0 < string.len() && string.len() <= INLINED_ATOM_MAX_LEN {
+            return Atom::new_inlined(string);
+        }
+
         loop {
             let mut block_epoch = atom_table.inner.active_epoch();
             let mut table_epoch = block_epoch.table.active_epoch();
@@ -398,9 +595,14 @@ impl AtomTable {
 
                 write_to_ptr(string, len_ptr);
 
-                let atom = Atom {
-                    index: ((STRINGS.len() << 3) + len_ptr as usize - ptr_base) as u64,
-                };
+                let atom = AtomCell::new()
+                    .with_name((STRINGS.len() + len_ptr as usize - ptr_base) as u64)
+                    .with_arity(0)
+                    .with_f(false)
+                    .with_m(false)
+                    .with_is_inlined(false)
+                    .with_tag(HeapCellValueTag::Atom as u8)
+                    .get_name();
 
                 let mut table = table_epoch.clone();
                 table.insert(atom);
@@ -418,18 +620,21 @@ impl AtomTable {
 unsafe impl Send for AtomTable {}
 unsafe impl Sync for AtomTable {}
 
+/*
 #[bitfield]
 #[repr(u64)]
 #[derive(Copy, Clone, Debug)]
 pub struct AtomCell {
-    name: B46,
+    name: B48,
     arity: B10,
     #[allow(unused)]
     f: bool,
     #[allow(unused)]
     m: bool,
     #[allow(unused)]
-    tag: B6,
+    inlined: bool,
+    #[allow(unused)]
+    tag: B3,
 }
 
 impl AtomCell {
@@ -471,3 +676,4 @@ impl AtomCell {
         (Atom::from((self.get_index() as u64) << 3), self.get_arity())
     }
 }
+*/

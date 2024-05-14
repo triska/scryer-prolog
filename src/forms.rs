@@ -1,9 +1,10 @@
 use crate::arena::*;
 use crate::atom_table::*;
 use crate::instructions::*;
+use crate::functor_macro::*;
 use crate::machine::disjuncts::VarData;
 use crate::machine::heap::*;
-use crate::machine::loader::PredicateQueue;
+// use crate::machine::loader::PredicateQueue;
 use crate::machine::machine_errors::*;
 use crate::machine::machine_indices::*;
 use crate::parser::ast::*;
@@ -26,18 +27,6 @@ use std::path::PathBuf;
 use crate::{is_infix, is_postfix};
 
 pub type PredicateKey = (Atom, usize); // name, arity.
-
-/*
-// vars of predicate, toplevel offset.  Vec<Term> is always a vector
-// of vars (we get their adjoining cells this way).
-pub type JumpStub = Vec<Term>;
-*/
-
-#[derive(Debug)]
-pub enum TopLevel {
-    Fact(Fact, VarData), // Term, line_num, col_num
-    Rule(Rule, VarData), // Rule, line_num, col_num
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum AppendOrPrepend {
@@ -268,14 +257,14 @@ pub enum QueryTerm {
     GetLevel(usize), // var_num
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Fact {
-    pub(crate) term: FocusedHeap,
+    pub(crate) term_loc: usize,
 }
 
 #[derive(Debug)]
 pub struct Rule {
-    pub(crate) term: FocusedHeap,
+    pub(crate) term_loc: usize,
     pub(crate) clauses: ChunkedTermVec,
 }
 
@@ -292,138 +281,34 @@ impl ListingSource {
     }
 }
 
-pub trait ClauseInfo {
-    fn is_consistent(&self, clauses: &PredicateQueue) -> bool {
-        match clauses.first() {
-            Some(cl) => {
-                self.name() == ClauseInfo::name(cl) && self.arity() == ClauseInfo::arity(cl)
+pub fn clause_predicate_key_from_heap(
+    heap: &impl SizedHeap,
+    value: HeapCellValue,
+) -> Option<PredicateKey> {
+    read_heap_cell!(value,
+        (HeapCellValueTag::Atom, (name, _arity)) => {
+            debug_assert_eq!(_arity, 0);
+            Some((name, 0))
+        }
+        _ => {
+            if value.is_ref() {
+                clause_predicate_key(heap, value.get_value() as usize)
+            } else {
+                None
             }
-            None => true,
         }
-    }
-
-    fn name(&self) -> Option<Atom>;
-    fn arity(&self) -> usize;
+    )
 }
 
-impl ClauseInfo for PredicateKey {
-    #[inline]
-    fn name(&self) -> Option<Atom> {
-        Some(self.0)
-    }
+pub fn clause_predicate_key(heap: &impl SizedHeap, term_loc: usize) -> Option<PredicateKey> {
+    let key_opt = term_predicate_key(heap, term_loc);
 
-    #[inline]
-    fn arity(&self) -> usize {
-        self.1
-    }
-}
-
-fn clause_name(heap: &[HeapCellValue], term_loc: usize) -> Option<Atom> {
-    let name = term_name(heap, term_loc);
-
-    if Some(atom!(":-")) == name && 2 == term_arity(heap, term_loc) {
-        term_nth_arg(heap, term_loc, 1).and_then(|arg_loc| term_name(heap, arg_loc))
+    if Some((atom!(":-"), 2)) == key_opt {
+        term_nth_arg(heap, term_loc, 1).and_then(|arg_loc| {
+            term_predicate_key(heap, arg_loc)
+        })
     } else {
-        name
-    }
-}
-
-fn clause_arity(heap: &[HeapCellValue], term_loc: usize) -> usize {
-    let name = term_name(heap, term_loc);
-
-    if Some(atom!(":-")) == name && 2 == term_arity(heap, term_loc) {
-        term_nth_arg(heap, term_loc, 1)
-            .map(|arg_loc| term_arity(heap, arg_loc))
-            .unwrap_or(0)
-    } else {
-        term_arity(heap, term_loc)
-    }
-}
-
-impl ClauseInfo for FocusedHeap {
-    #[inline]
-    fn name(&self) -> Option<Atom> {
-        clause_name(&self.heap, self.focus)
-    }
-
-    #[inline]
-    fn arity(&self) -> usize {
-        clause_arity(&self.heap, self.focus)
-    }
-}
-
-impl<'a> ClauseInfo for FocusedHeapRefMut<'a> {
-    #[inline]
-    fn name(&self) -> Option<Atom> {
-        clause_name(self.heap, self.focus)
-    }
-
-    #[inline]
-    fn arity(&self) -> usize {
-        clause_arity(self.heap, self.focus)
-    }
-}
-
-/*
-impl ClauseInfo for Term {
-    fn name(&self) -> Option<Atom> {
-        match self {
-            Term::Clause(_, name, terms) => {
-                match name {
-                    atom!(":-") => {
-                        match terms.len() {
-                            1 => None, // a declaration.
-                            2 => terms[0].name(),
-                            _ => Some(*name),
-                        }
-                    }
-                    _ => Some(*name), //str_buf),
-                }
-            }
-            Term::Literal(_, Literal::Atom(name)) => Some(*name),
-            _ => None,
-        }
-    }
-
-    fn arity(&self) -> usize {
-        match self {
-            Term::Clause(_, name, terms) => match &*name.as_str() {
-                ":-" => match terms.len() {
-                    1 => 0,
-                    2 => terms[0].arity(),
-                    _ => terms.len(),
-                },
-                _ => terms.len(),
-            },
-            _ => 0,
-        }
-    }
-}
-*/
-
-impl ClauseInfo for Rule {
-    fn name(&self) -> Option<Atom> {
-        self.term.name(self.term.focus)
-    }
-
-    fn arity(&self) -> usize {
-        self.term.arity(self.term.focus)
-    }
-}
-
-impl ClauseInfo for PredicateClause {
-    fn name(&self) -> Option<Atom> {
-        match self {
-            PredicateClause::Fact(ref fact, ..) => fact.term.name(fact.term.focus),
-            PredicateClause::Rule(ref rule, ..) => rule.term.name(rule.term.focus),
-        }
-    }
-
-    fn arity(&self) -> usize {
-        match self {
-            PredicateClause::Fact(ref fact, ..) => fact.term.arity(fact.term.focus),
-            PredicateClause::Rule(ref rule, ..) => rule.term.arity(rule.term.focus),
-        }
+        key_opt
     }
 }
 
@@ -434,32 +319,26 @@ pub enum PredicateClause {
 }
 
 impl PredicateClause {
-    pub(crate) fn args(&self) -> Option<&[HeapCellValue]> {
-        let (term, focus) = match self {
-            PredicateClause::Fact(Fact { term }, _) => (term, term.focus),
-            PredicateClause::Rule(Rule { term, .. }, _) => {
-                let focus = term.nth_arg(term.focus, 1).unwrap();
-                (term, focus)
+    pub(crate) fn args<'a>(&self, heap: &'a Heap) -> Option<std::ops::RangeInclusive<usize>> {
+        let focus = match self {
+            &PredicateClause::Fact(Fact { term_loc }, _) => term_loc,
+            &PredicateClause::Rule(Rule { term_loc, .. }, _) => {
+                term_nth_arg(heap, term_loc, 1).unwrap()
             }
         };
 
-        let arity = term.arity(focus);
+        let arity = clause_predicate_key(heap, focus)
+            .map(|(_name, arity)| arity)
+            .unwrap_or(0);
 
-        read_heap_cell!(term.deref_loc(focus),
+        read_heap_cell!(heap_bound_store(heap, heap_bound_deref(heap, heap[focus])),
             (HeapCellValueTag::Str, s) => {
-                Some(&term.heap[s+1 .. s+arity+1])
+                Some(s+1 ..= s+arity)
             }
             _ => {
                 None
             }
         )
-    }
-
-    pub(crate) fn heap(&self) -> &[HeapCellValue] {
-        match self {
-            PredicateClause::Fact(ref fact, ..) => &fact.term.heap,
-            PredicateClause::Rule(ref rule, ..) => &rule.term.heap,
-        }
     }
 }
 
@@ -479,10 +358,10 @@ pub enum ModuleSource {
 impl ModuleSource {
     pub(crate) fn as_functor_stub(&self) -> MachineStub {
         match self {
-            ModuleSource::Library(name) => {
-                functor!(atom!("library"), [atom(name)])
+            &ModuleSource::Library(name) => {
+                functor!(atom!("library"), [atom_as_cell(name)])
             }
-            ModuleSource::File(name) => {
+            &ModuleSource::File(name) => {
                 functor!(name)
             }
         }
@@ -825,6 +704,7 @@ impl ArenaFrom<i32> for Number {
     }
 }
 
+/*
 impl ArenaFrom<Number> for Literal {
     #[inline]
     fn arena_from(value: Number, arena: &mut Arena) -> Literal {
@@ -834,6 +714,21 @@ impl ArenaFrom<Number> for Literal {
             Number::Float(OrderedFloat(f)) => Literal::from(float_alloc!(f, arena)),
             Number::Rational(r) => Literal::Rational(r),
         }
+    }
+}
+*/
+
+impl ArenaFrom<u64> for HeapCellValue {
+    #[inline]
+    fn arena_from(value: u64, arena: &mut Arena) -> HeapCellValue {
+        fixnum!(value as i64, arena)
+    }
+}
+
+impl ArenaFrom<usize> for HeapCellValue {
+    #[inline]
+    fn arena_from(value: usize, arena: &mut Arena) -> HeapCellValue {
+        HeapCellValue::arena_from(value as u64, arena)
     }
 }
 
@@ -908,8 +803,8 @@ impl Number {
 
 #[derive(Debug, Clone)]
 pub(crate) enum OptArgIndexKey {
-    Literal(usize, usize, Literal, Vec<Literal>), // index, IndexingCode location, opt arg, alternatives
-    List(usize, usize),                           // index, IndexingCode location
+    Literal(usize, usize, HeapCellValue, Vec<HeapCellValue>), // index, IndexingCode location, opt arg, alternatives
+    List(usize, usize),                                       // index, IndexingCode location
     None,
     Structure(usize, usize, Atom, usize), // index, IndexingCode location, name, arity
 }
