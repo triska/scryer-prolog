@@ -550,11 +550,11 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         stack: &'a mut Stack,
         op_dir: &'a OpDir,
         output: Outputter,
-        cell: HeapCellValue,
+        root_loc: usize,
     ) -> Self {
         HCPrinter {
             outputter: output,
-            iter: stackful_preorder_iter(heap, stack, cell),
+            iter: stackful_preorder_iter(heap, stack, root_loc),
             atom_tbl,
             op_dir,
             state_stack: vec![],
@@ -1854,6 +1854,8 @@ mod tests {
             .heap
             .extend(functor!(f_atom, [atom(a_atom), atom(b_atom)]));
 
+        wam.machine_st.heap.push(str_loc_as_cell!(0));
+
         {
             let printer = HCPrinter::new(
                 &mut wam.machine_st.heap,
@@ -1861,7 +1863,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             let output = printer.print();
@@ -1883,6 +1885,9 @@ mod tests {
             ]
         ));
 
+        let h = wam.machine_st.heap.len();
+        wam.machine_st.heap.push(str_loc_as_cell!(0));
+
         {
             let printer = HCPrinter::new(
                 &mut wam.machine_st.heap,
@@ -1890,7 +1895,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                h,
             );
 
             let output = printer.print();
@@ -1914,7 +1919,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             let output = printer.print();
@@ -1927,7 +1932,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             printer
@@ -1960,7 +1965,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             let output = printer.print();
@@ -1979,7 +1984,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             let output = printer.print();
@@ -1996,7 +2001,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             printer
@@ -2028,7 +2033,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             printer.max_depth = 5;
@@ -2044,6 +2049,10 @@ mod tests {
 
         put_partial_string(&mut wam.machine_st.heap, "abc", &wam.machine_st.atom_tbl);
 
+        wam.machine_st.heap.push(pstr_loc_as_cell!(0));
+
+        let h = wam.machine_st.heap.len() - 1;
+
         {
             let printer = HCPrinter::new(
                 &mut wam.machine_st.heap,
@@ -2051,7 +2060,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                pstr_loc_as_cell!(0),
+                h,
             );
 
             let output = printer.print();
@@ -2061,6 +2070,7 @@ mod tests {
 
         all_cells_unmarked(&wam.machine_st.heap);
 
+        wam.machine_st.heap.pop();
         wam.machine_st.heap.pop();
 
         wam.machine_st.heap.push(list_loc_as_cell!(2));
@@ -2079,7 +2089,7 @@ mod tests {
                 &mut wam.machine_st.stack,
                 &wam.op_dir,
                 PrinterOutputter::new(),
-                heap_loc_as_cell!(0),
+                0,
             );
 
             printer.double_quotes = true;

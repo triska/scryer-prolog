@@ -41,7 +41,7 @@ impl MockWAM {
         &mut self,
         input_stream: Stream,
     ) -> Result<TermWriteResult, CompilationError> {
-        self.machine_st.read(input_stream, &self.op_dir)
+        self.machine_st.read_to_heap(input_stream, &self.op_dir)
     }
 
     pub fn parse_and_write_parsed_term_to_heap(
@@ -60,23 +60,24 @@ impl MockWAM {
 
         print_heap_terms(self.machine_st.heap.iter(), term_write_result.heap_loc);
 
+        let var_names = term_write_result
+            .var_locs
+            .iter()
+            .map(|(var_loc, var_ptrs)| {
+                (self.machine_st.heap[var_loc], var_ptrs.front().unwrap().clone())
+            })
+            .collect();
+
         let mut printer = HCPrinter::new(
             &mut self.machine_st.heap,
             Arc::clone(&self.machine_st.atom_tbl),
             &mut self.machine_st.stack,
             &self.op_dir,
             PrinterOutputter::new(),
-            heap_loc_as_cell!(term_write_result.heap_loc),
+            term_write_result.heap_loc,
         );
 
-        printer.var_names = term_write_result
-            .var_dict
-            .into_iter()
-            .map(|(var, cell)| match var {
-                VarKey::VarPtr(var) => (cell, var.clone()),
-                VarKey::AnonVar(_) => (cell, VarPtr::from(var.to_string())),
-            })
-            .collect();
+        printer.var_names = var_names;
 
         Ok(printer.print().result())
     }
@@ -219,7 +220,7 @@ pub(crate) fn write_parsed_term_to_heap(
     input_stream: Stream,
     op_dir: &OpDir,
 ) -> Result<TermWriteResult, CompilationError> {
-    machine_st.read(input_stream, op_dir)
+    machine_st.read_to_heap(input_stream, op_dir)
 }
 
 #[cfg(test)]
@@ -292,14 +293,15 @@ mod tests {
         wam.heap.clear();
 
         {
-            parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
+            let term_write_result_1 =
+                parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
 
             let term_write_result_2 =
                 parse_and_write_parsed_term_to_heap(&mut wam, "f(b,b).", &op_dir).unwrap();
 
             unify!(
                 wam,
-                str_loc_as_cell!(1),
+                heap_loc_as_cell!(term_write_result_1.heap_loc),
                 heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
@@ -312,14 +314,15 @@ mod tests {
         wam.heap.clear();
 
         {
-            parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
+            let term_write_result_1 =
+                parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
 
             let term_write_result_2 =
                 parse_and_write_parsed_term_to_heap(&mut wam, "f(f(A),Y).", &op_dir).unwrap();
 
             unify!(
                 wam,
-                heap_loc_as_cell!(0),
+                heap_loc_as_cell!(term_write_result_1.heap_loc),
                 heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
@@ -332,14 +335,15 @@ mod tests {
         wam.heap.clear();
 
         {
-            parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
+            let term_write_result_1 =
+                parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
 
             let term_write_result_2 =
                 parse_and_write_parsed_term_to_heap(&mut wam, "f(f(A),Y).", &op_dir).unwrap();
 
             unify!(
                 wam,
-                heap_loc_as_cell!(0),
+                heap_loc_as_cell!(term_write_result_1.heap_loc),
                 heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
@@ -352,14 +356,15 @@ mod tests {
         wam.heap.clear();
 
         {
-            parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
+            let term_write_result_1 =
+                parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
 
             let term_write_result_2 =
                 parse_and_write_parsed_term_to_heap(&mut wam, "f(f(A),A).", &op_dir).unwrap();
 
             unify!(
                 wam,
-                heap_loc_as_cell!(0),
+                heap_loc_as_cell!(term_write_result_1.heap_loc),
                 heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
@@ -372,7 +377,8 @@ mod tests {
         wam.heap.clear();
 
         {
-            parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
+            let term_write_result_1 =
+                parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
 
             let term_write_result_2 =
                 parse_and_write_parsed_term_to_heap(&mut wam, "f(A,f(A)).", &op_dir).unwrap();
@@ -381,7 +387,7 @@ mod tests {
 
             unify!(
                 wam,
-                heap_loc_as_cell!(0),
+                heap_loc_as_cell!(term_write_result_1.heap_loc),
                 heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
@@ -464,21 +470,8 @@ mod tests {
         wam.heap.push(heap_loc_as_cell!(0));
 
         unify!(wam, heap_loc_as_cell!(0), heap_loc_as_cell!(5));
-
         assert!(!wam.fail);
         all_cells_unmarked(&wam.heap);
-        wam.heap.clear();
-
-        {
-            let term_write_result_1 =
-                parse_and_write_parsed_term_to_heap(&mut wam, "X = g(X,y).", &op_dir).unwrap();
-
-            print_heap_terms(wam.heap.iter(), term_write_result_1.heap_loc);
-
-            unify!(wam, heap_loc_as_cell!(2), str_loc_as_cell!(4));
-
-            assert_eq!(wam.heap[2], str_loc_as_cell!(4));
-        }
     }
 
     #[test]
@@ -502,8 +495,8 @@ mod tests {
 
             unify_with_occurs_check!(
                 wam,
-                str_loc_as_cell!(0),
-                str_loc_as_cell!(term_write_result_2.heap_loc)
+                heap_loc_as_cell!(0),
+                heap_loc_as_cell!(term_write_result_2.heap_loc)
             );
 
             assert!(wam.fail);

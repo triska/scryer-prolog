@@ -166,6 +166,13 @@ impl Stack {
         }
     }
 
+    pub(crate) fn uninitialized() -> Self {
+        Stack {
+            buf: RawBlock::empty_block(),
+            _marker: PhantomData,
+        }
+    }
+
     #[inline(always)]
     unsafe fn alloc(&mut self, frame_size: usize) -> *mut u8 {
         loop {

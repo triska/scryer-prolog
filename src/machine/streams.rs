@@ -4,6 +4,7 @@ use crate::parser::ast::*;
 use crate::parser::char_reader::*;
 use crate::read::*;
 
+use bytes::Buf;
 #[cfg(feature = "http")]
 use crate::http::HttpResponse;
 use crate::machine::heap::*;
@@ -12,7 +13,6 @@ use crate::machine::machine_indices::*;
 use crate::machine::machine_state::*;
 use crate::types::*;
 
-use bytes::Buf;
 pub use scryer_modular_bitfield::prelude::*;
 
 use std::cmp::Ordering;
@@ -1654,7 +1654,7 @@ impl MachineState {
     ) -> Result<Stream, ParserError> {
         match stream.peek_char() {
             None => Ok(stream), // empty stream is handled gracefully by Lexer::eof
-            Some(Err(e)) => Err(ParserError::IO(e)),
+            Some(Err(e)) => Err(ParserError::IO(e, ParserErrorSrc::default())),
             Some(Ok(c)) => {
                 if c == '\u{feff}' {
                     // skip UTF-8 BOM

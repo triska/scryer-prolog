@@ -1,4 +1,4 @@
-use lexical::parse_lossy;
+use lexical::{FromLexicalLossy, parse_lossy};
 
 use crate::arena::ArenaAllocated;
 use crate::atom_table::*;
@@ -82,15 +82,20 @@ impl<'a, R: CharRead> Lexer<'a, R> {
     pub fn lookahead_char(&mut self) -> Result<char, ParserError> {
         match self.reader.peek_char() {
             Some(Ok(c)) => Ok(c),
-            _ => Err(ParserError::unexpected_eof()),
+            _ => Err(ParserError::unexpected_eof(self.loc_to_err_src())),
         }
     }
 
     pub fn read_char(&mut self) -> Result<char, ParserError> {
         match self.reader.read_char() {
             Some(Ok(c)) => Ok(c),
-            _ => Err(ParserError::unexpected_eof()),
+            _ => Err(ParserError::unexpected_eof(self.loc_to_err_src())),
         }
+    }
+
+    #[inline]
+    pub fn loc_to_err_src(&self) -> ParserErrorSrc {
+        ParserErrorSrc { line_num: self.line_num, col_num: self.col_num }
     }
 
     #[inline(always)]
@@ -164,10 +169,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
             match comment_loop() {
                 Err(e) if e.is_unexpected_eof() => {
-                    return Err(ParserError::IncompleteReduction(
-                        self.line_num,
-                        self.col_num,
-                    ));
+                    return Err(ParserError::IncompleteReduction(self.loc_to_err_src()));
                 }
                 Err(e) => {
                     return Err(e);
@@ -179,7 +181,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                 self.skip_char(c);
                 Ok(true)
             } else {
-                Err(ParserError::NonPrologChar(self.line_num, self.col_num))
+                Err(ParserError::NonPrologChar(self.loc_to_err_src()))
             }
         } else {
             self.return_char('/');
@@ -196,7 +198,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
             if !back_quote_char!(c2) {
                 self.return_char(c);
-                Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
+                Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()))
             } else {
                 self.skip_char(c2);
                 Ok(c2)
@@ -221,7 +223,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                 Ok(None)
             } else {
                 self.return_char(c);
-                Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
+                Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()))
             }
         } else {
             self.get_back_quoted_char().map(Some)
@@ -243,10 +245,10 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                 self.skip_char(c);
                 Ok(token)
             } else {
-                Err(ParserError::MissingQuote(self.line_num, self.col_num))
+                Err(ParserError::MissingQuote(self.loc_to_err_src()))
             }
         } else {
-            Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
+            Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()))
         }
     }
 
@@ -277,7 +279,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
             if !single_quote_char!(c2) {
                 self.return_char(c);
-                Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
+                Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()))
             } else {
                 self.skip_char(c2);
                 Ok(c2)
@@ -318,7 +320,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
 
             if !double_quote_char!(c2) {
                 self.return_char(c);
-                Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
+                Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()))
             } else {
                 self.skip_char(c2);
                 Ok(c2)
@@ -342,7 +344,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             't' => '\t',
             'n' => '\n',
             'r' => '\r',
-            c => return Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num)),
+            c => return Err(ParserError::UnexpectedChar(c, self.loc_to_err_src())),
         };
 
         self.skip_char(c);
@@ -360,10 +362,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
         if hexadecimal_digit_char!(c) {
             self.escape_sequence_to_char(|c| hexadecimal_digit_char!(c), 16)
         } else {
-            Err(ParserError::IncompleteReduction(
-                self.line_num,
-                self.col_num,
-            ))
+            Err(ParserError::IncompleteReduction(self.loc_to_err_src()))
         }
     }
 
@@ -389,17 +388,14 @@ impl<'a, R: CharRead> Lexer<'a, R> {
         if backslash_char!(c) {
             self.skip_char(c);
             u32::from_str_radix(&token, radix).map_or_else(
-                |_| Err(ParserError::ParseBigInt(self.line_num, self.col_num)),
+                |_| Err(ParserError::ParseBigInt(self.loc_to_err_src())),
                 |n| {
                     char::try_from(n)
-                        .map_err(|_| ParserError::Utf8Error(self.line_num, self.col_num))
+                        .map_err(|_| ParserError::Utf8Error(self.loc_to_err_src()))
                 },
             )
         } else {
-            Err(ParserError::IncompleteReduction(
-                self.line_num,
-                self.col_num,
-            ))
+            Err(ParserError::IncompleteReduction(self.loc_to_err_src()))
         }
     }
 
@@ -411,7 +407,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             Ok(c)
         } else {
             if !backslash_char!(c) {
-                return Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num));
+                return Err(ParserError::UnexpectedChar(c, self.loc_to_err_src()));
             }
 
             self.skip_char(c);
@@ -442,7 +438,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             self.skip_char(c);
             Ok(token)
         } else {
-            Err(ParserError::MissingQuote(self.line_num, self.col_num))
+            Err(ParserError::MissingQuote(self.loc_to_err_src()))
         }
     }
 
@@ -473,11 +469,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                 &mut self.machine_st.arena
                             )))
                         })
-                        .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                        .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
         } else {
             self.return_char(start);
-            Err(ParserError::ParseBigInt(self.line_num, self.col_num))
+            Err(ParserError::ParseBigInt(self.loc_to_err_src()))
         }
     }
 
@@ -508,11 +504,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                 &mut self.machine_st.arena
                             )))
                         })
-                        .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                        .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
         } else {
             self.return_char(start);
-            Err(ParserError::ParseBigInt(self.line_num, self.col_num))
+            Err(ParserError::ParseBigInt(self.loc_to_err_src()))
         }
     }
 
@@ -543,11 +539,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                 &mut self.machine_st.arena
                             )))
                         })
-                        .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                        .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
         } else {
             self.return_char(start);
-            Err(ParserError::ParseBigInt(self.line_num, self.col_num))
+            Err(ParserError::ParseBigInt(self.loc_to_err_src()))
         }
     }
 
@@ -618,11 +614,11 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                     }
                 }
             } else {
-                return Err(ParserError::InvalidSingleQuotedCharacter(c));
+                return Err(ParserError::InvalidSingleQuotedCharacter(c, self.loc_to_err_src()));
             }
         } else {
             match self.get_back_quoted_string() {
-                Ok(_) => return Err(ParserError::BackQuotedString(self.line_num, self.col_num)),
+                Ok(_) => return Err(ParserError::BackQuotedString(self.loc_to_err_src())),
                 Err(e) => return Err(e),
             }
         }
@@ -637,13 +633,17 @@ impl<'a, R: CharRead> Lexer<'a, R> {
         }
     }
 
+    fn parse_lossy_wrapper<T: FromLexicalLossy>(&self, token: String) -> Result<T, ParserError> {
+        match parse_lossy::<T, _>(token.as_bytes()) {
+            Ok(n) => Ok(n),
+            Err(e) => return Err(ParserError::LexicalError(e, self.loc_to_err_src())),
+        }
+    }
+
     fn vacate_with_float(&mut self, mut token: String) -> Result<Token, ParserError> {
         self.return_char(token.pop().unwrap());
-        let n = parse_lossy::<f64, _>(token.as_bytes())?;
-        Ok(Token::Literal(Literal::from(float_alloc!(
-            n,
-            self.machine_st.arena
-        ))))
+        let n = self.parse_lossy_wrapper::<f64>(token)?;
+        Ok(Token::Literal(Literal::from(float_alloc!(n, self.machine_st.arena))))
     }
 
     fn skip_underscore_in_number(&mut self) -> Result<char, ParserError> {
@@ -657,7 +657,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
             if decimal_digit_char!(c) {
                 Ok(c)
             } else {
-                Err(ParserError::ParseBigInt(self.line_num, self.col_num))
+                Err(ParserError::ParseBigInt(self.loc_to_err_src()))
             }
         } else {
             Ok(c)
@@ -695,7 +695,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                     &mut self.machine_st.arena
                                 )))
                             })
-                            .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                            .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                     })
             } else if decimal_digit_char!(self.lookahead_char()?) {
                 token.push('.');
@@ -757,7 +757,8 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                             }
                         }
 
-                        let n = parse_lossy::<f64, _>(token.as_bytes())?;
+                        let n = self.parse_lossy_wrapper::<f64>(token)?;
+
                         Ok(Token::Literal(Literal::from(float_alloc!(
                             n,
                             self.machine_st.arena
@@ -766,7 +767,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                         return self.vacate_with_float(token);
                     }
                 } else {
-                    let n = parse_lossy::<f64, _>(token.as_bytes())?;
+                    let n = self.parse_lossy_wrapper::<f64>(token)?;
                     Ok(Token::Literal(Literal::from(float_alloc!(
                         n,
                         self.machine_st.arena
@@ -787,7 +788,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                     &mut self.machine_st.arena
                                 )))
                             })
-                            .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                            .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                     })
             }
         } else if token.starts_with('0') && token.len() == 1 {
@@ -809,7 +810,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                         )))
                                     })
                                     .map_err(|_| {
-                                        ParserError::ParseBigInt(self.line_num, self.col_num)
+                                        ParserError::ParseBigInt(self.loc_to_err_src())
                                     })
                             })
                     } else {
@@ -834,7 +835,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                         )))
                                     })
                                     .map_err(|_| {
-                                        ParserError::ParseBigInt(self.line_num, self.col_num)
+                                        ParserError::ParseBigInt(self.loc_to_err_src())
                                     })
                             })
                     } else {
@@ -859,7 +860,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                         )))
                                     })
                                     .map_err(|_| {
-                                        ParserError::ParseBigInt(self.line_num, self.col_num)
+                                        ParserError::ParseBigInt(self.loc_to_err_src())
                                     })
                             })
                     } else {
@@ -909,7 +910,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                         )))
                                     })
                                     .map_err(|_| {
-                                        ParserError::ParseBigInt(self.line_num, self.col_num)
+                                        ParserError::ParseBigInt(self.loc_to_err_src())
                                     })
                             })
                     })
@@ -926,7 +927,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                     &mut self.machine_st.arena
                                 )))
                             })
-                            .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                            .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                     })
             }
         } else {
@@ -942,7 +943,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                                 &mut self.machine_st.arena
                             )))
                         })
-                        .map_err(|_| ParserError::ParseBigInt(self.line_num, self.col_num))
+                        .map_err(|_| ParserError::ParseBigInt(self.loc_to_err_src()))
                 })
         }
     }
@@ -1094,7 +1095,7 @@ impl<'a, R: CharRead> Lexer<'a, R> {
                 }
 
                 if c == '\u{0}' {
-                    return Err(ParserError::unexpected_eof());
+                    return Err(ParserError::unexpected_eof(self.loc_to_err_src()));
                 }
 
                 self.name_token(c)
