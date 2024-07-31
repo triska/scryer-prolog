@@ -5,7 +5,6 @@ use crate::atom_table;
 use crate::heap_print::{HCPrinter, HCValueOutputter, PrinterOutputter};
 use crate::machine::mock_wam::CompositeOpDir;
 use crate::machine::{copy_and_align_iter, BREAK_FROM_DISPATCH_LOOP_LOC, LIB_QUERY_SUCCESS};
-use crate::parser::ast::{Var, VarPtr};
 use crate::parser::parser::{Parser, Tokens};
 use indexmap::IndexMap;
 
@@ -94,20 +93,11 @@ impl Machine {
             .unwrap();
 
         let var_names: IndexMap<_, _> = term
-            .var_locs
+            .inverse_var_locs
             .iter()
-            .map(|(var_loc, var_ptrs)| {
-                let var_loc = var_loc + heap_loc;
-                let cell = self.machine_st.heap[var_loc];
-                let var_ptr = var_ptrs.front().unwrap();
-
-                match &*var_ptr.borrow() {
-                    // NOTE: not the intention behind Var::InSitu here but
-                    // we can hijack it to store anonymous variables
-                    // without creating problems.
-                    Var::Anon => (cell, VarPtr::from(Var::InSitu(var_loc))),
-                    _ => (cell, var_ptr.clone()),
-                }
+            .map(|(var_loc, var)| {
+                let cell = term.heap[*var_loc];
+                (cell + heap_loc, var.clone())
             })
             .collect();
 
@@ -156,7 +146,7 @@ impl Machine {
             }
 
             if self.machine_st.p == LIB_QUERY_SUCCESS {
-                if term.var_locs.is_empty() {
+                if term.inverse_var_locs.is_empty() {
                     matches.push(QueryResolutionLine::True);
                     break;
                 }
@@ -170,16 +160,12 @@ impl Machine {
 
             let mut bindings: BTreeMap<String, Value> = BTreeMap::new();
 
-            for (var_loc, var_ptrs) in term.var_locs.iter() {
-                let var_loc = var_loc + heap_loc;
-                let var_ptr = var_ptrs.front().unwrap();
-
-                if var_ptr.borrow().to_string().starts_with('_') {
+            for (var_loc, var) in term.inverse_var_locs.iter() {
+                if var.starts_with('_') {
                     continue;
                 }
 
-                // let term_to_be_printed = term.heap[var_loc as usize];
-
+                let var_loc = var_loc + heap_loc;
                 let mut printer = HCPrinter::new(
                     &mut self.machine_st.heap,
                     Arc::clone(&self.machine_st.atom_tbl),
@@ -201,9 +187,9 @@ impl Machine {
                 let output: String = outputter.result();
                 // println!("Result: {} = {}", var_key.to_string(), output);
 
-                if var_ptr.borrow().to_string() != output {
+                if **var != output {
                     bindings.insert(
-                        var_ptr.borrow().to_string(),
+                        var.as_str().to_owned(),
                         Value::try_from(output).expect("Couldn't convert Houtput to Value"),
                     );
                 }

@@ -193,7 +193,7 @@ impl<T: ?Sized, M: ?Sized> RcuRef<T, M> {
     }
 
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        this.data == other.data
+        std::ptr::eq(this.data.as_ptr(), other.data.as_ptr())
     }
 
     pub fn clone(this: &Self) -> Self {

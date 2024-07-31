@@ -496,7 +496,7 @@ pub struct HCPrinter<'a, Outputter> {
     toplevel_spec: Option<DirectedOp>,
     last_item_idx: usize,
     parent_of_first_op: Option<(DirectedOp, usize)>,
-    pub var_names: IndexMap<HeapCellValue, VarPtr>,
+    pub var_names: IndexMap<HeapCellValue, Var>,
     pub numbervars_offset: Integer,
     pub numbervars: bool,
     pub quoted: bool,
@@ -814,7 +814,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         if let Some(var) = self.var_names.get(&cell) {
             read_heap_cell!(cell,
                (HeapCellValueTag::Var | HeapCellValueTag::AttrVar | HeapCellValueTag::StackVar) => {
-                   return Some(var.borrow().to_string());
+                   return Some(var.to_string());
                }
                _ => {
                    self.iter.push_stack(h);
@@ -856,7 +856,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                         // short-circuits handle_heap_term.
                         // self.iter.pop_stack();
 
-                        let var_str = var.borrow().to_string();
+                        let var_str = var.to_string();
 
                         push_space_if_amb!(self, &var_str, {
                             append_str!(self, &var_str);
@@ -884,7 +884,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                                 Some(var) => {
                                     // If the term is bound to a named variable,
                                     // print the variable's name to output.
-                                    let var_str = var.borrow().to_string();
+                                    let var_str = var.to_string();
 
                                     push_space_if_amb!(self, &var_str, {
                                         append_str!(self, &var_str);
@@ -1937,7 +1937,7 @@ mod tests {
 
             printer
                 .var_names
-                .insert(list_loc_as_cell!(1), VarPtr::from("L"));
+                .insert(list_loc_as_cell!(1), Rc::new("L".to_string()));
 
             let output = printer.print();
 
@@ -2006,7 +2006,7 @@ mod tests {
 
             printer
                 .var_names
-                .insert(list_loc_as_cell!(1), VarPtr::from("L"));
+                .insert(list_loc_as_cell!(1), Rc::new("L".to_string()));
 
             let output = printer.print();
 

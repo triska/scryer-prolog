@@ -496,7 +496,7 @@ impl<'a, LS: LoadState<'a>> Loader<'a, LS> {
         let machine_st = LS::machine_st(&mut self.payload);
 
         term.copy_term_from_machine_heap(machine_st, cell);
-        term.var_locs = var_locs_from_iter(
+        term.inverse_var_locs = inverse_var_locs_from_iter(
             fact_iterator::<false>(
                 &mut term.heap,
                 &mut stack,
@@ -1104,7 +1104,9 @@ impl<'a, LS: LoadState<'a>> Loader<'a, LS> {
         );
 
         let value = term.heap[term.focus];
-        term.var_locs = var_locs_from_iter(eager_stackful_preorder_iter(&mut term.heap, value));
+        term.inverse_var_locs = inverse_var_locs_from_iter(
+            eager_stackful_preorder_iter(&mut term.heap, value),
+        );
         Ok(term)
     }
 
