@@ -1,9 +1,10 @@
 use crate::arena::*;
 use crate::atom_table::*;
 use crate::instructions::*;
+use crate::functor_macro::*;
 use crate::machine::disjuncts::VarData;
 use crate::machine::heap::*;
-use crate::machine::loader::PredicateQueue;
+// use crate::machine::loader::PredicateQueue;
 use crate::machine::machine_errors::*;
 use crate::machine::machine_indices::*;
 use crate::parser::ast::*;
@@ -17,7 +18,6 @@ use fxhash::FxBuildHasher;
 use indexmap::{IndexMap, IndexSet};
 use ordered_float::OrderedFloat;
 
-use std::cell::Cell;
 use std::collections::VecDeque;
 use std::convert::TryFrom;
 use std::fmt;
@@ -25,18 +25,6 @@ use std::ops::{AddAssign, Deref, DerefMut};
 use std::path::PathBuf;
 
 pub type PredicateKey = (Atom, usize); // name, arity.
-
-/*
-// vars of predicate, toplevel offset.  Vec<Term> is always a vector
-// of vars (we get their adjoining cells this way).
-pub type JumpStub = Vec<Term>;
-*/
-
-#[derive(Debug)]
-pub enum TopLevel {
-    Fact(Fact, VarData), // Term, line_num, col_num
-    Rule(Rule, VarData), // Rule, line_num, col_num
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum AppendOrPrepend {
@@ -67,19 +55,41 @@ pub enum Level {
     Shallow,
 }
 
-impl Level {
-    pub(crate) fn child_level(self) -> Level {
-        match self {
-            Level::Root => Level::Shallow,
-            _ => Level::Deep,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum CallPolicy {
     Default,
     Counted,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GenContext {
+    Head,
+    Mid(usize),
+    Last(usize), // Mid & Last: chunk_num
+}
+
+impl GenContext {
+    #[inline]
+    pub fn chunk_num(&self) -> usize {
+        match self {
+            GenContext::Head => 0,
+            &GenContext::Mid(cn) | &GenContext::Last(cn) => cn,
+        }
+    }
+
+    #[inline]
+    pub fn chunk_type(&self) -> ChunkType {
+        match self {
+            GenContext::Head    => ChunkType::Head,
+            GenContext::Mid(_)  => ChunkType::Mid,
+            GenContext::Last(_) => ChunkType::Last,
+        }
+    }
+
+    #[inline]
+    pub fn is_last(self) -> bool {
+        matches!(self, GenContext::Last(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,19 +97,6 @@ pub enum ChunkType {
     Head,
     Mid,
     Last,
-}
-
-#[derive(Debug)]
-pub enum RootIterationPolicy {
-    Iterated,
-    NotIterated,
-}
-
-impl RootIterationPolicy {
-    #[inline(always)]
-    pub fn iterable(&self) -> bool {
-        matches!(self, RootIterationPolicy::Iterated)
-    }
 }
 
 impl ChunkType {
@@ -121,12 +118,14 @@ impl ChunkType {
 #[derive(Debug)]
 pub enum ChunkedTerms {
     Branch(Vec<VecDeque<ChunkedTerms>>),
-    Chunk(VecDeque<QueryTerm>),
+    Chunk { chunk_num: usize, terms: VecDeque<QueryTerm> },
 }
 
 #[derive(Debug)]
 pub struct ChunkedTermVec {
     pub chunk_vec: VecDeque<ChunkedTerms>,
+    pub current_chunk_num: usize,
+    pub current_chunk_type: ChunkType,
 }
 
 impl Deref for ChunkedTermVec {
@@ -151,6 +150,8 @@ impl ChunkedTermVec {
     pub fn new() -> Self {
         Self {
             chunk_vec: VecDeque::new(),
+            current_chunk_num: 0,
+            current_chunk_type: ChunkType::Mid,
         }
     }
 
@@ -159,58 +160,109 @@ impl ChunkedTermVec {
             .push_back(ChunkedTerms::Branch(Vec::with_capacity(capacity)));
     }
 
+    pub fn push_branch_arm(&mut self, branch: VecDeque<ChunkedTerms>) {
+        match self.chunk_vec.back_mut().unwrap() {
+            ChunkedTerms::Branch(branches) => {
+                branches.push(branch);
+            }
+            ChunkedTerms::Chunk { .. } => {
+                self.chunk_vec.push_back(ChunkedTerms::Branch(vec![branch]));
+            }
+        }
+    }
+
+    pub fn try_set_chunk_at_inlined_boundary(&mut self) -> bool {
+        if self.current_chunk_type.is_last() {
+            self.current_chunk_type = ChunkType::Mid;
+            self.current_chunk_num += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn try_set_chunk_at_call_boundary(&mut self) -> bool {
+        if self.current_chunk_type.is_last() {
+            self.current_chunk_num += 1;
+            true
+        } else {
+            self.current_chunk_type = ChunkType::Last;
+            false
+        }
+    }
+
     #[inline]
     pub fn add_chunk(&mut self) {
-        self.chunk_vec
-            .push_back(ChunkedTerms::Chunk(VecDeque::from(vec![])));
+        let chunk = ChunkedTerms::Chunk {
+            chunk_num: self.current_chunk_num,
+            terms: VecDeque::from(vec![]),
+        };
+        self.chunk_vec.push_back(chunk);
+    }
+
+    pub fn current_gen_context(&self) -> GenContext {
+        self.current_chunk_type.to_gen_context(self.current_chunk_num)
     }
 
     pub fn push_chunk_term(&mut self, term: QueryTerm) {
         match self.chunk_vec.back_mut() {
             Some(ChunkedTerms::Branch(_)) => {
-                self.chunk_vec
-                    .push_back(ChunkedTerms::Chunk(VecDeque::from(vec![term])));
+                let chunk = ChunkedTerms::Chunk {
+                    chunk_num: self.current_chunk_num,
+                    terms: VecDeque::from(vec![term]),
+                };
+
+                self.chunk_vec.push_back(chunk);
             }
-            Some(ChunkedTerms::Chunk(chunk)) => {
-                chunk.push_back(term);
+            Some(ChunkedTerms::Chunk { terms, .. }) => {
+                terms.push_back(term);
             }
             None => {
-                self.chunk_vec
-                    .push_back(ChunkedTerms::Chunk(VecDeque::from(vec![term])));
+                let chunk = ChunkedTerms::Chunk {
+                    chunk_num: self.current_chunk_num,
+                    terms: VecDeque::from(vec![term]),
+                };
+
+                self.chunk_vec.push_back(chunk);
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct QueryClause {
+    pub ct: ClauseType,
+    pub arity: usize,
+    pub term: HeapCellValue,
+    pub code_indices: IndexMap<usize, CodeIndex, FxBuildHasher>,
+    pub call_policy: CallPolicy,
+}
+
+impl QueryClause {
+    pub fn term_loc(&self) -> usize {
+        self.term.get_value() as usize
     }
 }
 
 #[derive(Debug)]
 pub enum QueryTerm {
-    // register, clause type, subterms, clause call policy.
-    Clause(Cell<RegType>, ClauseType, Vec<Term>, CallPolicy),
+    Clause(QueryClause),
     Fail,
-    LocalCut { var_num: usize, cut_prev: bool }, // var_num
-    GlobalCut(usize),                            // var_num
+    Succeed,
+    LocalCut { var_num: usize, cut_prev: bool },
+    GlobalCut(usize), // var_num
     GetCutPoint { var_num: usize, prev_b: bool },
     GetLevel(usize), // var_num
 }
 
-impl QueryTerm {
-    pub(crate) fn arity(&self) -> usize {
-        match self {
-            QueryTerm::Clause(_, _, subterms, ..) => subterms.len(),
-            &QueryTerm::GetLevel(_) | &QueryTerm::GetCutPoint { .. } => 1,
-            _ => 0,
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Fact {
-    pub(crate) head: Term,
+    pub(crate) term_loc: usize,
 }
 
 #[derive(Debug)]
 pub struct Rule {
-    pub(crate) head: (Atom, Vec<Term>),
+    pub(crate) term_loc: usize,
     pub(crate) clauses: ChunkedTermVec,
 }
 
@@ -227,90 +279,34 @@ impl ListingSource {
     }
 }
 
-pub trait ClauseInfo {
-    fn is_consistent(&self, clauses: &PredicateQueue) -> bool {
-        match clauses.first() {
-            Some(cl) => {
-                self.name() == ClauseInfo::name(cl) && self.arity() == ClauseInfo::arity(cl)
+pub fn clause_predicate_key_from_heap(
+    heap: &impl SizedHeap,
+    value: HeapCellValue,
+) -> Option<PredicateKey> {
+    read_heap_cell!(value,
+        (HeapCellValueTag::Atom, (name, _arity)) => {
+            debug_assert_eq!(_arity, 0);
+            Some((name, 0))
+        }
+        _ => {
+            if value.is_ref() {
+                clause_predicate_key(heap, value.get_value() as usize)
+            } else {
+                None
             }
-            None => true,
         }
-    }
-
-    fn name(&self) -> Option<Atom>;
-    fn arity(&self) -> usize;
+    )
 }
 
-impl ClauseInfo for PredicateKey {
-    #[inline]
-    fn name(&self) -> Option<Atom> {
-        Some(self.0)
-    }
+pub fn clause_predicate_key(heap: &impl SizedHeap, term_loc: usize) -> Option<PredicateKey> {
+    let key_opt = term_predicate_key(heap, term_loc);
 
-    #[inline]
-    fn arity(&self) -> usize {
-        self.1
-    }
-}
-
-impl ClauseInfo for Term {
-    fn name(&self) -> Option<Atom> {
-        match self {
-            Term::Clause(_, name, terms) => {
-                match name {
-                    atom!(":-") => {
-                        match terms.len() {
-                            1 => None, // a declaration.
-                            2 => terms[0].name(),
-                            _ => Some(*name),
-                        }
-                    }
-                    _ => Some(*name), //str_buf),
-                }
-            }
-            Term::Literal(_, Literal::Atom(name)) => Some(*name),
-            _ => None,
-        }
-    }
-
-    fn arity(&self) -> usize {
-        match self {
-            Term::Clause(_, name, terms) => match &*name.as_str() {
-                ":-" => match terms.len() {
-                    1 => 0,
-                    2 => terms[0].arity(),
-                    _ => terms.len(),
-                },
-                _ => terms.len(),
-            },
-            _ => 0,
-        }
-    }
-}
-
-impl ClauseInfo for Rule {
-    fn name(&self) -> Option<Atom> {
-        Some(self.head.0)
-    }
-
-    fn arity(&self) -> usize {
-        self.head.1.len()
-    }
-}
-
-impl ClauseInfo for PredicateClause {
-    fn name(&self) -> Option<Atom> {
-        match self {
-            PredicateClause::Fact(ref term, ..) => term.head.name(),
-            PredicateClause::Rule(ref rule, ..) => rule.name(),
-        }
-    }
-
-    fn arity(&self) -> usize {
-        match self {
-            PredicateClause::Fact(ref term, ..) => term.head.arity(),
-            PredicateClause::Rule(ref rule, ..) => rule.arity(),
-        }
+    if Some((atom!(":-"), 2)) == key_opt {
+        term_nth_arg(heap, term_loc, 1).and_then(|arg_loc| {
+            term_predicate_key(heap, arg_loc)
+        })
+    } else {
+        key_opt
     }
 }
 
@@ -321,20 +317,26 @@ pub enum PredicateClause {
 }
 
 impl PredicateClause {
-    pub(crate) fn args(&self) -> Option<&[Term]> {
-        match self {
-            PredicateClause::Fact(term, ..) => match &term.head {
-                Term::Clause(_, _, args) => Some(args),
-                _ => None,
-            },
-            PredicateClause::Rule(rule, ..) => {
-                if rule.head.1.is_empty() {
-                    None
-                } else {
-                    Some(&rule.head.1)
-                }
+    pub(crate) fn args<'a>(&self, heap: &'a Heap) -> Option<std::ops::RangeInclusive<usize>> {
+        let focus = match self {
+            &PredicateClause::Fact(Fact { term_loc }, _) => term_loc,
+            &PredicateClause::Rule(Rule { term_loc, .. }, _) => {
+                term_nth_arg(heap, term_loc, 1).unwrap()
             }
-        }
+        };
+
+        let arity = clause_predicate_key(heap, focus)
+            .map(|(_name, arity)| arity)
+            .unwrap_or(0);
+
+        read_heap_cell!(heap_bound_store(heap, heap_bound_deref(heap, heap[focus])),
+            (HeapCellValueTag::Str, s) => {
+                Some(s+1 ..= s+arity)
+            }
+            _ => {
+                None
+            }
+        )
     }
 }
 
@@ -354,10 +356,10 @@ pub enum ModuleSource {
 impl ModuleSource {
     pub(crate) fn as_functor_stub(&self) -> MachineStub {
         match self {
-            ModuleSource::Library(name) => {
-                functor!(atom!("library"), [atom(name)])
+            &ModuleSource::Library(name) => {
+                functor!(atom!("library"), [atom_as_cell(name)])
             }
-            ModuleSource::File(name) => {
+            &ModuleSource::File(name) => {
                 functor!(name)
             }
         }
@@ -690,6 +692,7 @@ impl ArenaFrom<i32> for Number {
     }
 }
 
+/*
 impl ArenaFrom<Number> for Literal {
     #[inline]
     fn arena_from(value: Number, arena: &mut Arena) -> Literal {
@@ -699,6 +702,21 @@ impl ArenaFrom<Number> for Literal {
             Number::Float(OrderedFloat(f)) => Literal::from(float_alloc!(f, arena)),
             Number::Rational(r) => Literal::Rational(r),
         }
+    }
+}
+*/
+
+impl ArenaFrom<u64> for HeapCellValue {
+    #[inline]
+    fn arena_from(value: u64, arena: &mut Arena) -> HeapCellValue {
+        fixnum!(value as i64, arena)
+    }
+}
+
+impl ArenaFrom<usize> for HeapCellValue {
+    #[inline]
+    fn arena_from(value: usize, arena: &mut Arena) -> HeapCellValue {
+        HeapCellValue::arena_from(value as u64, arena)
     }
 }
 
@@ -773,8 +791,8 @@ impl Number {
 
 #[derive(Debug, Clone)]
 pub(crate) enum OptArgIndexKey {
-    Literal(usize, usize, Literal, Vec<Literal>), // index, IndexingCode location, opt arg, alternatives
-    List(usize, usize),                           // index, IndexingCode location
+    Literal(usize, usize, HeapCellValue, Vec<HeapCellValue>), // index, IndexingCode location, opt arg, alternatives
+    List(usize, usize),                                       // index, IndexingCode location
     None,
     Structure(usize, usize, Atom, usize), // index, IndexingCode location, name, arity
 }

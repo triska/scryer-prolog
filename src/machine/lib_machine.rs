@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::atom_table;
-use crate::machine::machine_indices::VarKey;
+use crate::atom_table::AtomTable;
 use crate::machine::mock_wam::CompositeOpDir;
 use crate::machine::{BREAK_FROM_DISPATCH_LOOP_LOC, LIB_QUERY_SUCCESS};
-use crate::parser::ast::{Var, VarPtr};
-use crate::parser::parser::{Parser, Tokens};
-use crate::read::{write_term_to_heap, TermWriteResult};
+use crate::parser::ast::{TermWriteResult, Var};
+use crate::parser::lexer::*;
+use crate::parser::parser::Tokens;
 use indexmap::IndexMap;
 
 use super::{
@@ -18,7 +17,7 @@ pub struct QueryState<'a> {
     machine: &'a mut Machine,
     term: TermWriteResult,
     stub_b: usize,
-    var_names: IndexMap<HeapCellValue, VarPtr>,
+    var_names: IndexMap<HeapCellValue, Var>,
     called: bool,
 }
 
@@ -80,7 +79,7 @@ impl Iterator for QueryState<'_> {
         }
 
         if machine.machine_st.p == LIB_QUERY_SUCCESS {
-            if term_write_result.var_dict.is_empty() {
+            if term_write_result.inverse_var_locs.is_empty() {
                 self.machine.machine_st.backtrack();
                 return Some(Ok(QueryResolutionLine::True));
             }
@@ -89,47 +88,41 @@ impl Iterator for QueryState<'_> {
         }
 
         let mut bindings: BTreeMap<String, Value> = BTreeMap::new();
+        let inverse_var_locs = &term_write_result.inverse_var_locs;
 
-        let var_dict = &term_write_result.var_dict;
-
-        for (var_key, term_to_be_printed) in var_dict.iter() {
-            let mut var_name = var_key.to_string();
+        for (var_loc, var_name) in inverse_var_locs.iter() {
             if var_name.starts_with('_') {
-                let should_print = var_names.values().any(|x| match x.borrow().clone() {
-                    Var::Named(v) => v == var_name,
-                    _ => false,
+                let should_print = var_names.values().any(|v| {
+                    v == var_name
                 });
                 if !should_print {
                     continue;
                 }
             }
 
-            let mut term =
-                Value::from_heapcell(machine, *term_to_be_printed, &mut var_names.clone());
+            let var_loc = *var_loc;
+            let term = Value::from_heapcell(
+                machine,
+                heap_loc_as_cell!(var_loc),
+                &mut var_names.clone(),
+            );
 
             if let Value::Var(ref term_str) = term {
-                if *term_str == var_name {
+                if *term_str == **var_name {
                     continue;
                 }
 
-                // Var dict is in the order things appear in the query. If var_name appears
-                // after term in the query, switch their places.
-                let var_name_idx = var_dict
-                    .get_index_of(&VarKey::VarPtr(Var::Named(var_name.clone()).into()))
-                    .unwrap();
-                let term_idx =
-                    var_dict.get_index_of(&VarKey::VarPtr(Var::Named(term_str.clone()).into()));
-                if let Some(idx) = term_idx {
-                    if idx < var_name_idx {
-                        let new_term = Value::Var(var_name);
-                        let new_var_name = term_str.into();
-                        term = new_term;
-                        var_name = new_var_name;
-                    }
+                let var_cell = machine.machine_st.store(
+                    machine.machine_st.deref(machine.machine_st.heap[var_loc]),
+                );
+
+                if (var_cell.get_value() as usize) < var_loc {
+                    bindings.insert(term_str.clone(), Value::Var(var_name.to_string()));
+                    continue;
                 }
             }
 
-            bindings.insert(var_name, term);
+            bindings.insert(var_name.to_string(), term);
         }
 
         // NOTE: there are outstanding choicepoints, backtrack
@@ -155,7 +148,7 @@ impl Machine {
     pub fn consult_module_string(&mut self, module_name: &str, program: String) {
         let stream = Stream::from_owned_string(program, &mut self.machine_st.arena);
         self.machine_st.registers[1] = stream_as_cell!(stream);
-        self.machine_st.registers[2] = atom_as_cell!(&atom_table::AtomTable::build_with(
+        self.machine_st.registers[2] = atom_as_cell!(AtomTable::build_with(
             &self.machine_st.atom_tbl,
             module_name
         ));
@@ -183,7 +176,7 @@ impl Machine {
         or_frame.prelude.attr_var_queue_len = 0;
 
         self.machine_st.b = stub_b;
-        self.machine_st.hb = self.machine_st.heap.len();
+        self.machine_st.hb = self.machine_st.heap.cell_len();
         self.machine_st.block = stub_b;
     }
 
@@ -192,36 +185,21 @@ impl Machine {
     }
 
     pub fn run_query_iter(&mut self, query: String) -> QueryState {
-        let mut parser = Parser::new(
+        let mut lexer_parser = LexerParser::new(
             Stream::from_owned_string(query, &mut self.machine_st.arena),
             &mut self.machine_st,
         );
+
+        // Write parsed term to heap
         let op_dir = CompositeOpDir::new(&self.indices.op_dir, None);
-        let term = parser
+        let term = lexer_parser
             .read_term(&op_dir, Tokens::Default)
             .expect("Failed to parse query");
 
         self.allocate_stub_choice_point();
 
-        // Write parsed term to heap
-        let term_write_result =
-            write_term_to_heap(&term, &mut self.machine_st.heap, &self.machine_st.atom_tbl)
-                .expect("couldn't write term to heap");
-
-        let var_names: IndexMap<_, _> = term_write_result
-            .var_dict
-            .iter()
-            .map(|(var_key, cell)| match var_key {
-                // NOTE: not the intention behind Var::InSitu here but
-                // we can hijack it to store anonymous variables
-                // without creating problems.
-                VarKey::AnonVar(h) => (*cell, VarPtr::from(Var::InSitu(*h))),
-                VarKey::VarPtr(var_ptr) => (*cell, var_ptr.clone()),
-            })
-            .collect();
-
         // Write term to heap
-        self.machine_st.registers[1] = self.machine_st.heap[term_write_result.heap_loc];
+        self.machine_st.registers[1] = self.machine_st.heap[term.focus];
 
         self.machine_st.cp = LIB_QUERY_SUCCESS; // BREAK_FROM_DISPATCH_LOOP_LOC;
         let call_index_p = self
@@ -232,12 +210,21 @@ impl Machine {
             .local()
             .unwrap();
 
+        let var_names: IndexMap<_, _> = term
+            .inverse_var_locs
+            .iter()
+            .map(|(var_loc, var)| {
+                let cell = self.machine_st.heap[*var_loc];
+                (cell, var.clone())
+            })
+            .collect();
+
         self.machine_st.execute_at_index(1, call_index_p);
 
         let stub_b = self.machine_st.b;
         QueryState {
             machine: self,
-            term: term_write_result,
+            term,
             stub_b,
             var_names,
             called: false,

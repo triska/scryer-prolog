@@ -1,12 +1,12 @@
 use crate::arena::*;
 use crate::atom_table::*;
+use crate::functor_macro::*;
 use crate::parser::ast::*;
 use crate::parser::char_reader::*;
 use crate::read::*;
 
 #[cfg(feature = "http")]
 use crate::http::HttpResponse;
-use crate::machine::heap::*;
 use crate::machine::machine_errors::*;
 use crate::machine::machine_indices::*;
 use crate::machine::machine_state::*;
@@ -390,7 +390,7 @@ impl StreamOptions {
     #[inline]
     pub fn get_alias(self) -> Option<Atom> {
         if self.has_alias() {
-            Some(Atom::from(self.alias() << 3))
+            Some(Atom::from(self.alias() << 1))
         } else {
             None
         }
@@ -528,6 +528,11 @@ impl From<TypedArenaPtr<ReadlineStream>> for Stream {
 }
 
 impl Stream {
+    #[inline]
+    pub fn from_readline_stream(stream: ReadlineStream, arena: &mut Arena) -> Stream {
+        Stream::Readline(arena_alloc!(StreamLayout::new(stream), arena))
+    }
+
     #[inline]
     pub fn from_owned_string(string: String, arena: &mut Arena) -> Stream {
         Stream::Byte(arena_alloc!(
@@ -1662,7 +1667,7 @@ impl MachineState {
     ) -> Result<Stream, ParserError> {
         match stream.peek_char() {
             None => Ok(stream), // empty stream is handled gracefully by Lexer::eof
-            Some(Err(e)) => Err(ParserError::IO(e)),
+            Some(Err(e)) => Err(ParserError::IO(e, ParserErrorSrc::default())),
             Some(Ok(c)) => {
                 if c == '\u{feff}' {
                     // skip UTF-8 BOM
@@ -1735,7 +1740,7 @@ impl MachineState {
         let err = self.permission_error(
             Permission::Open,
             atom!("source_sink"),
-            functor!(atom!("alias"), [atom(alias)]),
+            functor!(atom!("alias"), [atom_as_cell(alias)]),
         );
 
         self.error_form(err, stub)
@@ -1743,7 +1748,7 @@ impl MachineState {
 
     pub(crate) fn reposition_error(&mut self, stub_name: Atom, stub_arity: usize) -> MachineStub {
         let stub = functor_stub(stub_name, stub_arity);
-        let rep_stub = functor!(atom!("reposition"), [atom(atom!("true"))]);
+        let rep_stub = functor!(atom!("reposition"), [atom_as_cell((atom!("true")))]);
         let err = self.permission_error(Permission::Open, atom!("source_sink"), rep_stub);
 
         self.error_form(err, stub)

@@ -20,6 +20,8 @@ use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 
 use crate::types::*;
+// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// pub(crate) struct OrderedOpDirKey(pub(crate) Atom, pub(crate) Fixity);
 
 // 7.2
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -166,6 +168,13 @@ impl From<TypedArenaPtr<IndexPtr>> for CodeIndex {
     }
 }
 
+impl From<CodeIndex> for HeapCellValue {
+    #[inline(always)]
+    fn from(idx: CodeIndex) -> HeapCellValue {
+        untyped_arena_ptr_as_cell!(UntypedArenaPtr::from(idx))
+    }
+}
+
 impl CodeIndex {
     #[inline]
     pub(crate) fn new(ptr: IndexPtr, arena: &mut Arena) -> Self {
@@ -205,35 +214,13 @@ impl CodeIndex {
         std::mem::replace(self.0.deref_mut(), value)
     }
 
+    /*
     #[inline(always)]
     pub(crate) fn as_ptr(&self) -> *const IndexPtr {
         self.0.as_ptr()
     }
+    */
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum VarKey {
-    AnonVar(usize),
-    VarPtr(VarPtr),
-}
-
-impl VarKey {
-    #[allow(clippy::inherent_to_string)]
-    #[inline]
-    pub(crate) fn to_string(&self) -> String {
-        match self {
-            VarKey::AnonVar(h) => format!("_{}", h),
-            VarKey::VarPtr(var) => var.borrow().to_string(),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_anon(&self) -> bool {
-        matches!(self, VarKey::AnonVar(_))
-    }
-}
-
-pub(crate) type HeapVarDict = IndexMap<VarKey, HeapCellValue, FxBuildHasher>;
 
 pub(crate) type GlobalVarDir = IndexMap<Atom, (Ball, Option<HeapCellValue>), FxBuildHasher>;
 
@@ -291,11 +278,9 @@ impl IndexStore {
             _ => self
                 .get_meta_predicate_spec(key.0, key.1, &compilation_target)
                 .map(|meta_specs| {
-                    meta_specs.iter().find(|meta_spec| {
-                        matches!(
-                            meta_spec,
-                            MetaSpec::Colon | MetaSpec::RequiresExpansionWithArgument(_)
-                        )
+                    meta_specs.iter().find(|meta_spec| match meta_spec {
+                        MetaSpec::Colon | MetaSpec::RequiresExpansionWithArgument(_) => true,
+                        _ => false,
                     })
                 })
                 .map(|meta_spec_opt| meta_spec_opt.is_some())
