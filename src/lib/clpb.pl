@@ -35,6 +35,8 @@
 :- use_module(library(pairs)).
 :- use_module(library(dcgs)).
 :- use_module(library(error), [domain_error/3, type_error/3]).
+:- use_module(library(debug)).
+:- use_module(library(format)).
 
 :- attribute
         clpb/1,
@@ -106,14 +108,28 @@ partition(Pred, Ls0, As, Bs) :-
         include(Pred, Ls0, As),
         exclude(Pred, Ls0, Bs).
 
-goal_expansion(get_attr(Var, Module, Value), (var(Var),get_atts(Var, Access))) :-
-        Access =.. [Module,Value].
+get_attr(Var, Module, Value) :-
+        Access =.. [Module,Value],
+        var(Var),
+        get_atts(Var, Access).
 
-goal_expansion(put_attr(Var, Module, Value), put_atts(Var, Access)) :-
-        Access =.. [Module,Value].
+put_attr(Var, Module, Value) :-
+        Access =.. [Module,Value],
+        put_atts(Var, Access).
 
-goal_expansion(del_attr(Var, Module), (var(Var) -> put_atts(Var, -Access);true)) :-
-        Access =.. [Module,_].
+del_attr(Var, Module) :-
+        Access =.. [Module,_],
+        (   var(Var) -> put_atts(Var, -Access);true).
+
+
+% goal_expansion(get_attr(Var, Module, Value), (var(Var),get_atts(Var, Access))) :-
+%         Access =.. [Module,Value].
+
+% goal_expansion(put_attr(Var, Module, Value), put_atts(Var, Access)) :-
+%         Access =.. [Module,Value].
+
+% goal_expansion(del_attr(Var, Module), (var(Var) -> put_atts(Var, -Access);true)) :-
+%         Access =.. [Module,_].
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -590,8 +606,10 @@ nodes_with_variable([Node|Nodes], VI) -->
 make_node(Var, Low, High, Node) :-
         (   Low == High -> Node = Low
         ;   low_high_key(Low, High, Key),
-            (   lookup_node(Var, Key, Node) -> true
-            ;   clpb_next_id('$clpb_next_node', ID),
+            (   $lookup_node(Var, Key, Node) ->
+                portray_clause(lookup_succeeded)
+            ;   portray_clause(lookup_failed),
+                clpb_next_id('$clpb_next_node', ID),
                 Node = node(ID,Var,Low,High,_Aux),
                 register_node(Var, Key, Node)
             )
@@ -836,13 +854,26 @@ state(S0, S), [S] --> [S0].
    Unification. X = Expr is equivalent to sat(X =:= Expr).
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
+portray_bdd(BDD) :-
+        bdd_nodes(BDD, Nodes),
+        (   phrase(nodes(Nodes), Ns) ->
+            portray_clause(start_bdd),
+            maplist(portray_clause, Ns),
+            portray_clause(end_bdd)
+        ;   portray_clause(cannot_portray(BDD))
+        ).
+
 verify_attributes(Var, Other, Gs) :-
-        % format("~w = ~w\n", [Var,Other]),
+        format("~w = ~w\n", [Var,Other]),
         (   get_attr(Var, clpb, index_root(I,Root)) ->
+            portray_clause(index(I)=Other),
             (   integer(Other) ->
                 (   between(0, 1, Other) ->
                     root_get_formula_bdd(Root, Sat, BDD0),
-                    bdd_restriction(BDD0, I, Other, BDD),
+                    portray_bdd(BDD0),
+                    portray_clause(restricting(I,Other)),
+                    $bdd_restriction(BDD0, I, Other, BDD),
+                    portray_bdd(BDD),
                     root_put_formula_bdd(Root, Sat, BDD),
                     Gs = [satisfiable_bdd(BDD)]
                 ;   no_truth_value(Other)
@@ -928,34 +959,18 @@ quantify_existantially(E, E0, E^E0) :- put_attr(E, clpb_omit_boolean, true).
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 bdd_restriction(Node, VI, Value, Res) :-
-        empty_assoc(G0),
-        phrase(bdd_restriction_(Node, VI, Value, Res), [G0], _),
-        is_bdd(Res).
-
-bdd_restriction_(Node, VI, Value, Res) -->
-        (   { integer(Node) } -> { Res = Node }
-        ;   { node_var_low_high(Node, Var, Low, High) } ->
-            (   { integer(Var) } ->
-                (   { Var =:= 0 } -> bdd_restriction_(Low, VI, Value, Res)
-                ;   { Var =:= 1 } -> bdd_restriction_(High, VI, Value, Res)
-                ;   { no_truth_value(Var) }
+        (   integer(Node) -> Res = Node
+        ;   node_var_low_high(Node, Var, Low, High),
+            var_index(Var, I0),
+            (   I0 =:= VI ->
+                (   Value =:= 0 -> Res = Low
+                ;   Value =:= 1 -> Res = High
                 )
-            ;   { var_index(Var, I0),
-                  node_id(Node, ID) },
-                (   { I0 =:= VI } ->
-                    (   { Value =:= 0 } -> { Res = Low }
-                    ;   { Value =:= 1 } -> { Res = High }
-                    )
-                ;   { I0 > VI } -> { Res = Node }
-                ;   state(G0), { get_assoc(ID, G0, Res) } -> []
-                ;   bdd_restriction_(Low, VI, Value, LRes),
-                    bdd_restriction_(High, VI, Value, HRes),
-                    make_node(Var, LRes, HRes, Res),
-                    state(G0, G),
-                    { put_assoc(ID, G0, Res, G) }
-                )
+            ;   I0 > VI -> Res = Node
+            ;   bdd_restriction(Low, VI, Value, LRes),
+                bdd_restriction(High, VI, Value, HRes),
+                $make_node(Var, LRes, HRes, Res)
             )
-        ;   { domain_error(node, Node) }
         ).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1654,7 +1669,8 @@ make_clpb_var('$clpb_atoms') :-
 clpb_next_id(Var, ID) :-
         b_getval(Var, ID),
         Next is ID + 1,
-        b_setval(Var, Next).
+        b_setval(Var, Next),
+        portray_clause(current_id_next_id(Var, ID, Next)).
 
 clpb_atom_var(Atom, Var) :-
         b_getval('$clpb_atoms', A0),
