@@ -4790,7 +4790,7 @@ run_propagator(scalar_product_eq(Cs0,Vs0,P0), MState) -->
         ;   P =:= 0, Cs == [1,-1,1] -> kill(MState), Vs = [A,B,C], { A + C #= B }
         ;   P =:= 0, Cs == [-1,1,1] -> kill(MState), Vs = [A,B,C], { B + C #= A }
         ;   { duophrase(sum_finite_domains(Cs, Vs, 0, 0, Inf, Sup), Infs, Sups) },
-            % { nl, writeln(Infs-Sups-Inf-Sup) },
+            % { nl, portray_clause(Infs-Sups-Inf-Sup) },
             D1 is P - Inf,
             D2 is Sup - P,
             disable_queue,
@@ -6170,8 +6170,6 @@ difference_arcs([V|Vs], FL0) -->
             difference_arcs(Vs, FL)
         ;   difference_arcs(Vs, FL0)
         ).
-
-writeln(T) :- write(T), nl.
 
 :- meta_predicate(must_succeed(0)).
 
