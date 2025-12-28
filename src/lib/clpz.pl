@@ -6183,9 +6183,9 @@ enumerate([N|Ns], V) -->
         state(NumVar0, NumVar),
         { (   get_assoc(N, NumVar0, Y) -> NumVar0 = NumVar
           ;   put_assoc(N, NumVar0, Y, NumVar),
-              put_attr(Y, value, N)
+              put_atts(Y, value(N))
           ),
-          put_attr(F, flow, 0),
+          put_atts(F, flow(0)),
           must_succeed(append_edge(Y, edges, flow_from(F,V))),
           must_succeed(append_edge(V, edges, flow_to(F,Y))) },
         enumerate(Ns, V).
@@ -6196,31 +6196,31 @@ append_edge(V, Attr, E) :-
         ;   put_attr_(Attr, V, [E])
         ).
 
-get_attr_(edges, V, Es) :- get_attr(V, edges, Es).
-get_attr_(g0_edges, V, Es) :- get_attr(V, g0_edges, Es).
+get_attr_(edges, V, Es) :- get_atts(V, edges(Es)).
+get_attr_(g0_edges, V, Es) :- get_atts(V, g0_edges(Es)).
 
-put_attr_(edges, V, E) :- put_attr(V, edges, E).
-put_attr_(g0_edges, V, E) :- put_attr(V, g0_edges, E).
+put_attr_(edges, V, E) :- put_atts(V, edges(E)).
+put_attr_(g0_edges, V, E) :- put_atts(V, g0_edges(E)).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
    Strategy: Breadth-first search until we find a free right vertex in
    the value graph, then find an augmenting path in reverse.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-clear_parent(V) :- del_attr(V, parent).
+clear_parent(V) :- put_atts(V, -parent(_)).
 
 maximum_matching([]).
 maximum_matching([FL|FLs]) :-
         augmenting_path_to([[FL]], Levels, To),
         phrase(augmenting_path(FL, To), Path),
         maplist(maplist(clear_parent), Levels),
-        del_attr(To, free),
+        put_atts(To, -free(_)),
         adjust_alternate_1(Path),
         maximum_matching(FLs).
 
 reachables([]) --> [].
 reachables([V|Vs]) -->
-        { get_attr(V, edges, Es) },
+        { get_atts(V, edges(Es)) },
         reachables_(Es, V),
         reachables(Vs).
 
@@ -6230,16 +6230,16 @@ reachables_([E|Es], V) -->
         reachables_(Es, V).
 
 edge_reachable(flow_to(F,To), V) -->
-        (   { get_attr(F, flow, 0),
-              \+ get_attr(To, parent, _) } ->
-            { put_attr(To, parent, V-F) },
+        (   { get_atts(F, flow(0)),
+              \+ get_atts(To, parent(_)) } ->
+            { put_atts(To, parent(V-F)) },
             [To]
         ;   []
         ).
 edge_reachable(flow_from(F,From), V) -->
-        (   { get_attr(F, flow, 1),
-              \+ get_attr(From, parent, _) } ->
-            { put_attr(From, parent, V-F) },
+        (   { get_atts(F, flow(1)),
+              \+ get_atts(From, parent(_)) } ->
+            { put_atts(From, parent(V-F)) },
             [From]
         ;   []
         ).
@@ -6249,25 +6249,25 @@ augmenting_path_to(Levels0, Levels, Right) :-
         Levels1 = [Tos|Levels0],
         phrase(reachables(Vs), Tos),
         Tos = [_|_],
-        (   member(Right, Tos), get_attr(Right, free, true) ->
+        (   member(Right, Tos), get_atts(Right, free(true)) ->
             Levels = Levels1
         ;   augmenting_path_to(Levels1, Levels, Right)
         ).
 
 augmenting_path(S, V) -->
         (   { V == S } -> []
-        ;   { get_attr(V, parent, V1-Augment) },
+        ;   { get_atts(V, parent(V1-Augment)) },
             [Augment],
             augmenting_path(S, V1)
         ).
 
 adjust_alternate_1([A|Arcs]) :-
-        put_attr(A, flow, 1),
+        put_atts(A, flow(1)),
         adjust_alternate_0(Arcs).
 
 adjust_alternate_0([]).
 adjust_alternate_0([A|Arcs]) :-
-        put_attr(A, flow, 0),
+        put_atts(A, flow(0)),
         adjust_alternate_1(Arcs).
 
 % Instead of applying Berge's property directly, we can translate the
@@ -6275,25 +6275,25 @@ adjust_alternate_0([A|Arcs]) :-
 % strongly connected components of the graph.
 
 g_g0(V) :-
-        get_attr(V, edges, Es),
+        get_atts(V, edges(Es)),
         maplist(g_g0_(V), Es).
 
 g_g0_(V, flow_to(F,To)) :-
-        (   get_attr(F, flow, 1) ->
+        (   get_atts(F, flow(1)) ->
             append_edge(V, g0_edges, flow_to(F,To))
         ;   append_edge(To, g0_edges, flow_to(F,V))
         ).
 
 
 g0_successors(V, Tos) :-
-        (   get_attr(V, g0_edges, Tos0) ->
+        (   get_atts(V, g0_edges(Tos0)) ->
             maplist(arg(2), Tos0, Tos)
         ;   Tos = []
         ).
 
-put_free(F) :- put_attr(F, free, true).
+put_free(F) :- put_atts(F, free(true)).
 
-free_node(F) :- get_attr(F, free, true).
+free_node(F) :- get_atts(F, free(true)).
 
 :- meta_predicate(with_local_attributes(?, 0, ?)).
 
@@ -6336,18 +6336,18 @@ neq_nums([neq_num(V,N)|VNs]) -->
 
 distinct_goals([]) --> [].
 distinct_goals([V|Vs]) -->
-        { get_attr(V, edges, Es) },
+        { get_atts(V, edges(Es)) },
         distinct_goals_(Es, V),
         distinct_goals(Vs).
 
 distinct_goals_([], _) --> [].
 distinct_goals_([flow_to(F,To)|Es], V) -->
-        (   { get_attr(F, flow, 0),
-              \+ get_attr(F, used, true),
-              get_attr(V, lowlink, L1),
-              get_attr(To, lowlink, L2),
+        (   { get_atts(F, flow(0)),
+              \+ get_atts(F, used(true)),
+              get_atts(V, lowlink(L1)),
+              get_atts(To, lowlink(L2)),
               L1 =\= L2 } ->
-            { get_attr(To, value, N) },
+            { get_atts(To, value(N)) },
             [neq_num(V, N)]
         ;   []
         ),
@@ -6358,9 +6358,9 @@ distinct_goals_([flow_to(F,To)|Es], V) -->
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 dfs_used(V) :-
-        (   get_attr(V, visited, true) -> true
-        ;   put_attr(V, visited, true),
-            (   get_attr(V, g0_edges, Es) ->
+        (   get_atts(V, visited(true)) -> true
+        ;   put_atts(V, visited(true)),
+            (   get_atts(V, g0_edges(Es)) ->
                 dfs_used_edges(Es)
             ;   true
             )
@@ -6368,7 +6368,7 @@ dfs_used(V) :-
 
 dfs_used_edges([]).
 dfs_used_edges([flow_to(F,To)|Es]) :-
-        put_attr(F, used, true),
+        put_atts(F, used(true)),
         dfs_used(To),
         dfs_used_edges(Es).
 
@@ -6397,15 +6397,15 @@ scc([V|Vs]) -->
         ;   scc_(V), scc(Vs)
         ).
 
-vindex_defined(V) --> { get_attr(V, index, _) }.
+vindex_defined(V) --> { get_atts(V, index(_)) }.
 
 vindex_is_index(V) -->
         state(s(Index,_,_)),
-        { put_attr(V, index, Index) }.
+        { put_atts(V, index(Index)) }.
 
 vlowlink_is_index(V) -->
         state(s(Index,_,_)),
-        { put_attr(V, lowlink, Index) }.
+        { put_atts(V, lowlink(Index)) }.
 
 index_plus_one -->
         state(s(I,Stack,Succ), s(I1,Stack,Succ)),
@@ -6413,13 +6413,13 @@ index_plus_one -->
 
 s_push(V)  -->
         state(s(I,Stack,Succ), s(I,[V|Stack],Succ)),
-        { put_attr(V, in_stack, true) }.
+        { put_atts(V, in_stack(true)) }.
 
 vlowlink_min_lowlink(V, VP) -->
-        { get_attr(V, lowlink, VL),
-          get_attr(VP, lowlink, VPL),
+        { get_atts(V, lowlink(VL)),
+          get_atts(VP, lowlink(VPL)),
           VL1 is min(VL, VPL),
-          put_attr(V, lowlink, VL1) }.
+          put_atts(V, lowlink(VL1)) }.
 
 successors(V, Tos) --> state(s(_,_,Succ)), { call(Succ, V, Tos) }.
 
@@ -6430,16 +6430,16 @@ scc_(V) -->
         s_push(V),
         successors(V, Tos),
         each_edge(Tos, V),
-        (   { get_attr(V, index, VI),
-              get_attr(V, lowlink, VI) } -> pop_stack_to(V, VI)
+        (   { get_atts(V, index(VI)),
+              get_atts(V, lowlink(VI)) } -> pop_stack_to(V, VI)
         ;   []
         ).
 
 pop_stack_to(V, N) -->
         state(s(I,[First|Stack],Succ), s(I,Stack,Succ)),
-        { del_attr(First, in_stack) },
+        { put_atts(First, -in_stack(_)) },
         (   { First == V } -> []
-        ;   { put_attr(First, lowlink, N) },
+        ;   { put_atts(First, lowlink(N)) },
             pop_stack_to(V, N)
         ).
 
@@ -6459,9 +6459,9 @@ state(S), [S] --> [S].
 
 state(S0, S), [S] --> [S0].
 
-v_in_stack(V) --> { get_attr(V, in_stack, true) }.
+v_in_stack(V) --> { get_atts(V, in_stack(true)) }.
 
-node_lowlink(V, L) :- get_attr(V, lowlink, L).
+node_lowlink(V, L) :- get_atts(V, lowlink(L)).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
    nvalue/2: A relaxed version of all_distinct/1.
