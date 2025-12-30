@@ -137,7 +137,7 @@
         flow/1,
         parent/1,
         free/1,
-        g0_edges/1,
+        go_edges/1,
         used/1,
         lowlink/1,
         value/1,
@@ -6144,7 +6144,7 @@ distinct_attach([X|Xs], Prop, Right) -->
              attribute "flow" that is either 0 or 1 and an attribute "used"
              if it is part of a maximum matching
    parent ... used in breadth-first search
-   g0_edges ... [flow_to(F,To)] as above
+   go_edges ... [flow_to(F,To)] as above
    visited ... true if node was visited in DFS
    index, in_stack, lowlink ... used in Tarjan's SCC algorithm
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -6197,10 +6197,10 @@ append_edge(V, Attr, E) :-
         ).
 
 get_attr_(edges, V, Es) :- get_atts(V, edges(Es)).
-get_attr_(g0_edges, V, Es) :- get_atts(V, g0_edges(Es)).
+get_attr_(go_edges, V, Es) :- get_atts(V, go_edges(Es)).
 
 put_attr_(edges, V, E) :- put_atts(V, edges(E)).
-put_attr_(g0_edges, V, E) :- put_atts(V, g0_edges(E)).
+put_attr_(go_edges, V, E) :- put_atts(V, go_edges(E)).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
    Strategy: Breadth-first search until we find a free right vertex in
@@ -6272,21 +6272,21 @@ adjust_alternate_0([A|Arcs]) :-
 
 % Instead of applying Berge's property directly, we can translate the
 % problem in such a way, that we have to search for the so-called
-% strongly connected components of the graph.
+% strongly connected components of the oriented graph G_o.
 
-g_g0(V) :-
+g_go(V) :-
         get_atts(V, edges(Es)),
-        maplist(g_g0_(V), Es).
+        maplist(g_go_(V), Es).
 
-g_g0_(V, flow_to(F,To)) :-
+g_go_(V, flow_to(F,To)) :-
         (   get_atts(F, flow(1)) ->
-            append_edge(V, g0_edges, flow_to(F,To))
-        ;   append_edge(To, g0_edges, flow_to(F,V))
+            append_edge(V, go_edges, flow_to(F,To))
+        ;   append_edge(To, go_edges, flow_to(F,V))
         ).
 
 
-g0_successors(V, Tos) :-
-        (   get_atts(V, g0_edges(Tos0)) ->
+go_successors(V, Tos) :-
+        (   get_atts(V, go_edges(Tos0)) ->
             maplist(arg(2), Tos0, Tos)
         ;   Tos = []
         ).
@@ -6321,8 +6321,8 @@ distinct(Vars) -->
                maplist(put_free, FreeRight0),
                maximum_matching(FreeLeft),
                include(free_node, FreeRight0, FreeRight),
-               maplist(g_g0, FreeLeft),
-               scc(FreeLeft, g0_successors),
+               maplist(g_go, FreeLeft),
+               scc(FreeLeft, go_successors),
                maplist(dfs_used, FreeRight),
                phrase(distinct_goals(FreeLeft), Gs)), Gs) },
         disable_queue,
@@ -6360,7 +6360,7 @@ distinct_goals_([flow_to(F,To)|Es], V) -->
 dfs_used(V) :-
         (   get_atts(V, visited(true)) -> true
         ;   put_atts(V, visited(true)),
-            (   get_atts(V, g0_edges(Es)) ->
+            (   get_atts(V, go_edges(Es)) ->
                 dfs_used_edges(Es)
             ;   true
             )
