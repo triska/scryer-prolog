@@ -636,8 +636,23 @@ impl Machine {
         true
     }
 
+    // a dynamic clause that is dead to the current call is never
+    // applicable. clauses of static predicates are always living.
+    #[inline]
+    fn clause_is_living(&self, p: usize) -> bool {
+        match &self.code[p] {
+            &Instruction::DynamicElse(birth, death, _)
+            | &Instruction::DynamicInternalElse(birth, death, _) => {
+                self.machine_st.is_living_dynamic_clause(birth, death)
+            }
+            _ => true,
+        }
+    }
+
     fn next_applicable_clause(&mut self, mut offset: usize) -> Option<usize> {
-        while !self.next_clause_applicable(self.machine_st.p + offset + 1) {
+        while !(self.clause_is_living(self.machine_st.p + offset)
+            && self.next_clause_applicable(self.machine_st.p + offset + 1))
+        {
             match &self.code[self.machine_st.p + offset] {
                 &Instruction::DefaultRetryMeElse(o)
                 | &Instruction::RetryMeElse(o)
@@ -681,15 +696,21 @@ impl Machine {
                 IndexingLine::DynamicIndexedChoice(indexed_choice) => {
                     let idx = (self.machine_st.iip + inner_offset) as usize;
                     let o = indexed_choice.offsets[idx].offset();
+                    let is_last = idx + 1 == indexed_choice.offsets.len();
 
-                    if idx + 1 == indexed_choice.offsets.len() {
-                        return if self.next_clause_applicable(self.machine_st.p + o) {
+                    // the clause's DynamicInternalElse precedes the
+                    // clause code at offset o.
+                    let is_applicable = self.clause_is_living(self.machine_st.p + o - 1)
+                        && self.next_clause_applicable(self.machine_st.p + o);
+
+                    if is_last {
+                        return if is_applicable {
                             Some(inner_offset)
                         } else {
                             None
                         };
                     } else {
-                        if self.next_clause_applicable(self.machine_st.p + o) {
+                        if is_applicable {
                             return Some(inner_offset);
                         }
 

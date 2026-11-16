@@ -1,0 +1,1 @@
+args = ["-f", "--no-add-history", "src/tests/retract.pl", "-f", "-g", "use_module(library(retract_tests)), retract_tests:main_quiet(retract_tests)"]
