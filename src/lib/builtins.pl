@@ -395,12 +395,9 @@ dispatch_prep_((G1 ; G2), B, Conts) :-
           cont_list_goal(IConts2, Cont2),
           cont_list_goal(IConts3, Cont3),
           Cont0 = '$call'(builtins:staggered_if_then(Cont2, Cont3))
-       ;  dispatch_prep(G1, B, IConts0),
-          dispatch_prep(G2, B, IConts1),
-          cont_list_goal(IConts0, Cont0)
+       ;  dispatch_prep(G1, B, IConts0)
        )
-    ;  dispatch_prep(G1, B1, IConts0),
-       cont_list_goal(IConts0, Cont0)
+    ;  dispatch_prep(G1, B1, IConts0)
     ),
     dispatch_prep(G2, B, IConts1),
     cont_list_goal(IConts0, Cont0),
