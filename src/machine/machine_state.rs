@@ -5,6 +5,7 @@ use crate::atom_table::*;
 use crate::forms::*;
 use crate::heap_iter::*;
 use crate::heap_print::*;
+use crate::instructions::Death;
 use crate::machine::Machine;
 use crate::machine::attributed_variables::*;
 use crate::machine::copier::*;
@@ -533,6 +534,14 @@ impl<'a> CopierTarget for CopyBallTerm<'a> {
 }
 
 impl MachineState {
+    // a dynamic clause is visible to a call iff it was born before
+    // and dies no earlier than the call's clock, self.cc. this is
+    // the logical update view.
+    #[inline]
+    pub(crate) fn is_living_dynamic_clause(&self, birth: usize, death: Death) -> bool {
+        birth < self.cc && Death::Finite(self.cc) <= death
+    }
+
     pub(crate) fn backtrack(&mut self) {
         let b = self.b;
         let or_frame = self.stack.index_or_frame(b);

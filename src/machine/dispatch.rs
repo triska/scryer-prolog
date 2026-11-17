@@ -1235,11 +1235,36 @@ impl MachineState {
 }
 
 impl Machine {
+    // restore the clock of the dynamic call that pushed the current
+    // choice point. it must be restored before searching for the next
+    // living clause, since intervening dynamic calls overwrite
+    // self.machine_st.cc.
+    #[inline]
+    fn restore_dynamic_clock(&mut self) {
+        let b = self.machine_st.b;
+        let n = self.machine_st.stack.index_or_frame(b).prelude.num_cells;
+
+        self.machine_st.cc = unsafe {
+            self.machine_st.stack[stack_loc!(OrFrame, b, n - 1)].to_fixnum_or_cut_point_unchecked()
+        }
+        .get_num() as usize;
+    }
+
+    // when a dynamic choice point is re-entered and no living clause
+    // remains, the choice point must be removed before backtracking,
+    // or backtracking re-enters it forever.
+    #[inline]
+    fn discard_dynamic_choice_point(&mut self) {
+        let b = self.machine_st.b;
+        self.machine_st.b = self.machine_st.stack.index_or_frame(b).prelude.b;
+        self.machine_st.stack.truncate(b);
+    }
+
     pub(super) fn find_living_dynamic_else(&self, mut p: usize) -> Option<(usize, usize)> {
         loop {
             match self.code[p] {
                 Instruction::DynamicElse(birth, death, NextOrFail::Next(i)) => {
-                    if birth < self.machine_st.cc && Death::Finite(self.machine_st.cc) <= death {
+                    if self.machine_st.is_living_dynamic_clause(birth, death) {
                         return Some((p, i));
                     } else if i > 0 {
                         p += i;
@@ -1248,14 +1273,14 @@ impl Machine {
                     }
                 }
                 Instruction::DynamicElse(birth, death, NextOrFail::Fail(_)) => {
-                    if birth < self.machine_st.cc && Death::Finite(self.machine_st.cc) <= death {
+                    if self.machine_st.is_living_dynamic_clause(birth, death) {
                         return Some((p, 0));
                     } else {
                         return None;
                     }
                 }
                 Instruction::DynamicInternalElse(birth, death, NextOrFail::Next(i)) => {
-                    if birth < self.machine_st.cc && Death::Finite(self.machine_st.cc) <= death {
+                    if self.machine_st.is_living_dynamic_clause(birth, death) {
                         return Some((p, i));
                     } else if i > 0 {
                         p += i;
@@ -1264,7 +1289,7 @@ impl Machine {
                     }
                 }
                 Instruction::DynamicInternalElse(birth, death, NextOrFail::Fail(_)) => {
-                    if birth < self.machine_st.cc && Death::Finite(self.machine_st.cc) <= death {
+                    if self.machine_st.is_living_dynamic_clause(birth, death) {
                         return Some((p, 0));
                     } else {
                         return None;
@@ -1305,7 +1330,7 @@ impl Machine {
                 .map(Appended::offset)?;
             match &self.code[p + offset - 1] {
                 &Instruction::DynamicInternalElse(birth, death, next_or_fail) => {
-                    if birth < self.machine_st.cc && Death::Finite(self.machine_st.cc) <= death {
+                    if self.machine_st.is_living_dynamic_clause(birth, death) {
                         return Some((offset, oi, ii, next_or_fail.is_next()));
                     } else {
                         ii += 1;
@@ -1563,8 +1588,13 @@ impl Machine {
                     &Instruction::SetValue(reg) => self.machine_st.set_value_instr(reg),
                     &Instruction::SetVoid(n) => self.machine_st.set_void_instr(n),
                     Instruction::DynamicElse(..) => {
-                        if let FirstOrNext::First = self.machine_st.dynamic_mode {
-                            self.machine_st.cc = self.machine_st.global_clock;
+                        match self.machine_st.dynamic_mode {
+                            FirstOrNext::First => {
+                                self.machine_st.cc = self.machine_st.global_clock;
+                            }
+                            FirstOrNext::Next => {
+                                self.restore_dynamic_clock();
+                            }
                         }
 
                         let p = self.machine_st.p;
@@ -1607,21 +1637,6 @@ impl Machine {
                                         }
                                     }
                                     FirstOrNext::Next => {
-                                        let n = self
-                                            .machine_st
-                                            .stack
-                                            .index_or_frame(self.machine_st.b)
-                                            .prelude
-                                            .num_cells;
-
-                                        self.machine_st.cc = unsafe {
-                                            self.machine_st.stack
-                                                [stack_loc!(OrFrame, self.machine_st.b, n - 1)]
-                                            .to_fixnum_or_cut_point_unchecked()
-                                        }
-                                        .get_num()
-                                            as usize;
-
                                         if next_i > 0 {
                                             match self.find_living_dynamic_else(p + next_i) {
                                                 Some(_) => {
@@ -1640,6 +1655,10 @@ impl Machine {
                                 }
                             }
                             None => {
+                                if let FirstOrNext::Next = self.machine_st.dynamic_mode {
+                                    self.discard_dynamic_choice_point();
+                                }
+
                                 self.machine_st.fail = true;
                             }
                         }
@@ -1651,6 +1670,10 @@ impl Machine {
                         }
                     }
                     Instruction::DynamicInternalElse(..) => {
+                        if let FirstOrNext::Next = self.machine_st.dynamic_mode {
+                            self.restore_dynamic_clock();
+                        }
+
                         let p = self.machine_st.p;
 
                         match self.find_living_dynamic_else(p) {
@@ -1690,21 +1713,6 @@ impl Machine {
                                         }
                                     }
                                     FirstOrNext::Next => {
-                                        let n = self
-                                            .machine_st
-                                            .stack
-                                            .index_or_frame(self.machine_st.b)
-                                            .prelude
-                                            .num_cells;
-
-                                        self.machine_st.cc = unsafe {
-                                            self.machine_st.stack
-                                                [stack_loc!(OrFrame, self.machine_st.b, n - 1)]
-                                            .to_fixnum_or_cut_point_unchecked()
-                                        }
-                                        .get_num()
-                                            as usize;
-
                                         if next_i > 0 {
                                             match self.find_living_dynamic_else(p + next_i) {
                                                 Some(_) => {
@@ -1723,6 +1731,10 @@ impl Machine {
                                 }
                             }
                             None => {
+                                if let FirstOrNext::Next = self.machine_st.dynamic_mode {
+                                    self.discard_dynamic_choice_point();
+                                }
+
                                 self.machine_st.fail = true;
                             }
                         }
@@ -3480,8 +3492,9 @@ impl Machine {
                                     if let Instruction::DynamicInternalElse(birth, death, _) =
                                         machine.code[p - 1]
                                     {
-                                        return birth < machine.machine_st.cc
-                                            && Death::Finite(machine.machine_st.cc) <= death;
+                                        return machine
+                                            .machine_st
+                                            .is_living_dynamic_clause(birth, death);
                                     }
 
                                     true
@@ -3568,6 +3581,10 @@ impl Machine {
                                 IndexingLine::DynamicIndexedChoice(_) => {
                                     let p = self.machine_st.p;
 
+                                    if let FirstOrNext::Next = self.machine_st.dynamic_mode {
+                                        self.restore_dynamic_clock();
+                                    }
+
                                     match self.find_living_dynamic(
                                         self.machine_st.oip,
                                         self.machine_st.iip,
@@ -3620,20 +3637,6 @@ impl Machine {
                                                 }
                                                 FirstOrNext::Next => {
                                                     let b = self.machine_st.b;
-                                                    let n = self
-                                                        .machine_st
-                                                        .stack
-                                                        .index_or_frame(b)
-                                                        .prelude
-                                                        .num_cells;
-
-                                                    self.machine_st.cc = unsafe {
-                                                        self.machine_st.stack
-                                                            [stack_loc!(OrFrame, b, n - 1)]
-                                                        .to_fixnum_or_cut_point_unchecked()
-                                                    }
-                                                    .get_num()
-                                                        as usize;
 
                                                     if is_next_clause {
                                                         match self.find_living_dynamic(
@@ -3671,6 +3674,11 @@ impl Machine {
                                             }
                                         }
                                         None => {
+                                            if let FirstOrNext::Next = self.machine_st.dynamic_mode
+                                            {
+                                                self.discard_dynamic_choice_point();
+                                            }
+
                                             self.machine_st.fail = true;
                                         }
                                     }
