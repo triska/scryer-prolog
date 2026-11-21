@@ -83,9 +83,8 @@ render_step(Reposition, Stream, Pos, Ls) :-
     (   buffer_at_end_of_stream(Reposition, Stream) ->
         Ls = []
     ;   chars_to_read(CharsToRead),
-        buffer_get_n_chars(Reposition, Stream, CharsToRead, Chars),
-        partial_string(Chars, Ls, Ls0),
-        stream_to_lazy_list(Reposition, Stream, Ls0)
+        buffer_get_n_partial_string(Reposition, Stream, CharsToRead, Ls, Rest),
+        stream_to_lazy_list(Reposition, Stream, Rest)
     ).
 
 buffer_at_end_of_stream(true, Stream) :- at_end_of_stream(Stream).
@@ -106,23 +105,24 @@ set_stream_buffer_position(false, Stream, Pos) :-
     stream_bufferids(Stream, _, BufferPosId, _),
     bb_put(BufferPosId, Pos).
 
-buffer_get_n_chars(true, Stream, N, Chars) :-
-    get_n_chars(Stream, N, Chars).
-buffer_get_n_chars(false, Stream, N, Chars) :-
+buffer_get_n_partial_string(true, Stream, N, Chars, Rest) :-
+    '$get_n_partial_string'(Stream, N, Chars, Rest).
+buffer_get_n_partial_string(false, Stream, N, Chars, Rest) :-
     stream_bufferids(Stream, BufferId, BufferPosId, BufferLenId),
     buffer_prepare_for_n(Stream, BufferId, BufferPosId, BufferLenId, N),
     bb_get(BufferId, Buffer),
     bb_get(BufferPosId, BufferPos),
     (   BufferPos = eof ->
-        Chars = []
-    ;   string_get_n_chars(Buffer, BufferPos, N, Chars),
-        length(Chars, NChars),
+        Chars0 = []
+    ;   string_get_n_chars(Buffer, BufferPos, N, Chars0),
+        length(Chars0, NChars),
         (   NChars = 0 ->
             BufferPos1 = eof
         ;   BufferPos1 is BufferPos + NChars
         ),
         bb_put(BufferPosId, BufferPos1)
-    ).
+    ),
+    partial_string(Chars0, Chars, Rest).
 
 buffer_prepare_for_n(Stream, BufferId, BufferPosId, BufferLenId, N) :-
     bb_get(BufferPosId, BufferPos),
