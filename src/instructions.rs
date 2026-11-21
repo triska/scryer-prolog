@@ -983,7 +983,7 @@ impl Instruction {
             | &Instruction::CallFlushOutput
             | &Instruction::CallGetByte
             | &Instruction::CallGetChar
-            | &Instruction::CallGetNChars
+            | &Instruction::CallGetNPartialString
             | &Instruction::CallGetCode
             | &Instruction::CallGetSingleChar
             | &Instruction::CallTruncateIfNoLiftedHeapGrowthDiff
@@ -1242,7 +1242,7 @@ impl Instruction {
             | &Instruction::ExecuteFlushOutput
             | &Instruction::ExecuteGetByte
             | &Instruction::ExecuteGetChar
-            | &Instruction::ExecuteGetNChars
+            | &Instruction::ExecuteGetNPartialString
             | &Instruction::ExecuteGetCode
             | &Instruction::ExecuteGetSingleChar
             | &Instruction::ExecuteTruncateIfNoLiftedHeapGrowthDiff

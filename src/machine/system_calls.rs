@@ -3412,13 +3412,13 @@ impl Machine {
     }
 
     #[inline(always)]
-    pub(crate) fn get_n_chars(&mut self) -> CallResult {
+    pub(crate) fn get_n_partial_string(&mut self) -> CallResult {
         let _guard = read_line::RawReadGuard::new();
         let stream = self.machine_st.get_stream_or_alias(
             self.machine_st.registers[1],
             &self.indices,
-            atom!("get_n_chars"),
-            3,
+            atom!("$get_n_partial_string"),
+            4,
         )?;
 
         let num = match Number::try_from((self.deref_register(2), &self.machine_st.arena.f64_tbl)) {
@@ -3449,7 +3449,7 @@ impl Machine {
         } else {
             let mut iter = self.machine_st.open_parsing_stream(stream).map_err(|e| {
                 let err = self.machine_st.session_error(SessionError::from(e));
-                let stub = functor_stub(atom!("get_n_chars"), 2);
+                let stub = functor_stub(atom!("$get_n_partial_string"), 4);
 
                 self.machine_st.error_form(err, stub)
             })?;
@@ -3462,7 +3462,7 @@ impl Machine {
                         string.push(c);
                     }
                     Err(e) => {
-                        let stub = functor_stub(atom!("$get_n_chars"), 3);
+                        let stub = functor_stub(atom!("$get_n_partial_string"), 4);
                         let err = self.machine_st.session_error(SessionError::from(e));
 
                         return Err(self.machine_st.error_form(err, stub));
@@ -3474,13 +3474,26 @@ impl Machine {
             }
         };
 
-        let output = self.deref_register(3);
-        let cstr_cell = resource_error_call_result!(
-            self.machine_st,
-            self.machine_st.heap.allocate_cstr(string.as_bytes())
-        );
+        if string.is_empty() {
+            unify!(self.machine_st, self.machine_st.registers[3], self.machine_st.registers[4]);
+        } else {
+            let output = self.deref_register(3);
 
-        unify!(self.machine_st, cstr_cell, output);
+            let cstr_cell = resource_error_call_result!(
+                self.machine_st,
+                self.machine_st.heap.allocate_pstr(string.as_bytes())
+            );
+
+            let tail_loc = self.machine_st.heap.cell_len();
+
+            unify!(self.machine_st, cstr_cell, output);
+
+            if !self.machine_st.fail {
+                let tail = self.machine_st.registers[4];
+                unify!(self.machine_st, tail, heap_loc_as_cell!(tail_loc));
+            }
+        }
+
         Ok(())
     }
 

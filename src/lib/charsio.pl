@@ -312,7 +312,7 @@ continuation(_, ['\xFFFD\'|T], _) --> [_], decode_utf8(T).
 % Reads chars from stream Stream until it finds a `\n` character.
 % InitialChars will be appended at the end of Chars
 get_line_to_chars(Stream, Cs0, Cs) :-
-        '$get_n_chars'(Stream, 1, Char), % this also works for binary streams
+        '$get_n_partial_string'(Stream, 1, Char, []), % this also works for binary streams
         (   Char == [] -> Cs0 = Cs
         ;   Char = [C],
             Cs0 = [C|Rest],
@@ -326,25 +326,28 @@ get_line_to_chars(Stream, Cs0, Cs) :-
 % Read N chars from stream Stream. N can be an integer, in that case
 % only N chars are read, or a variable, unifying N with the number of chars
 % read until it found EOF.
+
 get_n_chars(Stream, N, Cs) :-
+    get_n_chars(Stream, N, Cs, []).
+
+get_n_chars(Stream, N, Cs, Rest) :-
         can_be(integer, N),
         (   var(N) ->
             get_to_eof(Stream, Cs),
             length(Cs, N)
         ;   N >= 0,
-            '$get_n_chars'(Stream, N, Cs)
+            '$get_n_partial_string'(Stream, N, Cs, Rest)
         ).
 
-get_n_chars_wrapper(Stream, N, Cs) :-
-        '$get_n_chars'(Stream, N, Cs).
+get_n_partial_string_wrapper(Stream, N, Cs, Rest) :-
+        '$get_n_partial_string'(Stream, N, Cs, Rest).
 
 get_to_eof(Stream, Cs) :-
-        catch(get_n_chars_wrapper(Stream, 512, Cs0),
+        catch(get_n_partial_string_wrapper(Stream, 512, Cs, Rest),
               error(syntax_error(unexpected_end_of_file), _),
-              Cs0 = []),
-        (   Cs0 == [] -> Cs = []
-        ;   partial_string(Cs0, Cs, Rest),
-            get_to_eof(Stream, Rest)
+              true),
+        (   var(Cs) -> Cs = []
+        ;   get_to_eof(Stream, Rest)
         ).
 
 %% chars_base64(?Chars, ?Base64, +Options).

@@ -295,8 +295,8 @@ enum SystemClauseType {
     GetByte,
     #[strum_discriminants(strum(props(Arity = "2", Name = "$get_char")))]
     GetChar,
-    #[strum_discriminants(strum(props(Arity = "3", Name = "$get_n_chars")))]
-    GetNChars,
+    #[strum_discriminants(strum(props(Arity = "4", Name = "$get_n_partial_string")))]
+    GetNPartialString,
     #[strum_discriminants(strum(props(Arity = "2", Name = "$get_code")))]
     GetCode,
     #[strum_discriminants(strum(props(Arity = "1", Name = "$get_single_char")))]

@@ -4028,12 +4028,12 @@ impl Machine {
                         try_or_throw!(self.machine_st, self.get_char(), continue);
                         step_or_fail!(self.machine_st, self.machine_st.p = self.machine_st.cp);
                     }
-                    Instruction::CallGetNChars => {
-                        try_or_throw!(self.machine_st, self.get_n_chars(), continue);
+                    Instruction::CallGetNPartialString => {
+                        try_or_throw!(self.machine_st, self.get_n_partial_string(), continue);
                         step_or_fail!(self.machine_st, self.machine_st.p += 1);
                     }
-                    Instruction::ExecuteGetNChars => {
-                        try_or_throw!(self.machine_st, self.get_n_chars(), continue);
+                    Instruction::ExecuteGetNPartialString => {
+                        try_or_throw!(self.machine_st, self.get_n_partial_string(), continue);
                         step_or_fail!(self.machine_st, self.machine_st.p = self.machine_st.cp);
                     }
                     Instruction::CallGetCode => {
